@@ -122,6 +122,9 @@ export const InstructionRecordForm = () => {
     try {
       const data = {
         ...formData,
+        businessName: businessName,
+        businessName_lowercase: businessName.toLowerCase(),
+        invoiceNumber_lowercase: formData.invoiceNumber?.toLowerCase() || '',
         updatedAt: serverTimestamp(),
       };
 
@@ -130,18 +133,18 @@ export const InstructionRecordForm = () => {
         await addDoc(collection(db, 'logs'), {
           userId: profile?.uid,
           username: profile?.username,
-          action: `updated instruction record for business ID: ${formData.businessId}`,
+          action: `updated instruction record for business: ${businessName}`,
           timestamp: new Date().toISOString(),
         });
       } else {
         await addDoc(collection(db, 'instructionRecords'), {
           ...data,
-          createdAt: new Date().toISOString(),
+          createdAt: serverTimestamp(),
         });
         await addDoc(collection(db, 'logs'), {
           userId: profile?.uid,
           username: profile?.username,
-          action: `created instruction record for business ID: ${formData.businessId}`,
+          action: `created instruction record for business: ${businessName}`,
           timestamp: new Date().toISOString(),
         });
       }

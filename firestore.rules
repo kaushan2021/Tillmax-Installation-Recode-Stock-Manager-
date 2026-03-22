@@ -13,13 +13,16 @@
 // Collection: businesses
 // Fields:
 //   - name: string (required)
+//   - name_lowercase: string
 //   - postcode: string (required)
+//   - postcode_lowercase: string
 //   - ownerName: string
 //   - telephone: string
 //   - contactNumber: string
 //   - email: string
 //   - address: string
 //   - createdAt: string
+//   - updatedAt: timestamp
 //
 // Collection: instructionRecords
 // Fields:

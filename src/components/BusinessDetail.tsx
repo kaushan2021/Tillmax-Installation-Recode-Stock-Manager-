@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
-import { collection, query, where, orderBy, onSnapshot, doc, getDoc, deleteDoc, addDoc } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, doc, getDoc, deleteDoc, addDoc, getDocs, limit, startAfter } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../AuthProvider';
 import { Business, InstructionRecord } from '../types';
@@ -40,11 +40,53 @@ export const BusinessDetail = () => {
   const [business, setBusiness] = useState<Business | null>(null);
   const [records, setRecords] = useState<InstructionRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [lastDoc, setLastDoc] = useState<any>(null);
+  const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const PAGE_SIZE = 10;
+
+  const fetchRecords = async (isNext = false) => {
+    if (!id || !profile) return;
+    if (isNext) setLoadingMore(true);
+    else setLoading(true);
+
+    try {
+      let q = query(
+        collection(db, 'instructionRecords'), 
+        where('businessId', '==', id),
+        orderBy('installationDate', 'desc'),
+        limit(PAGE_SIZE)
+      );
+
+      if (isNext && lastDoc) {
+        q = query(q, startAfter(lastDoc));
+      }
+
+      const snapshot = await getDocs(q);
+      const recordsData = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as InstructionRecord));
+      
+      if (isNext) {
+        setRecords(prev => [...prev, ...recordsData]);
+      } else {
+        setRecords(recordsData);
+      }
+
+      setLastDoc(snapshot.docs[snapshot.docs.length - 1]);
+      setHasMore(snapshot.docs.length === PAGE_SIZE);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.GET, 'instructionRecords');
+      setError("Failed to load instruction records.");
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  };
 
   useEffect(() => {
     if (!id || !profile) return;
-
+    
     const fetchBusiness = async () => {
       try {
         const docRef = doc(db, 'businesses', id);
@@ -57,27 +99,11 @@ export const BusinessDetail = () => {
       } catch (error) {
         handleFirestoreError(error, OperationType.GET, `businesses/${id}`);
         setError("Failed to load business details.");
-        setLoading(false);
       }
     };
 
-    const q = query(
-      collection(db, 'instructionRecords'), 
-      where('businessId', '==', id),
-      orderBy('installationDate', 'desc')
-    );
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setRecords(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as InstructionRecord)));
-      setLoading(false);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.GET, 'instructionRecords');
-      setError("Failed to load instruction records.");
-      setLoading(false);
-    });
-
     fetchBusiness();
-    return () => unsubscribe();
+    fetchRecords();
   }, [id, navigate, profile]);
 
   const [showDeleteBusinessConfirm, setShowDeleteBusinessConfirm] = useState(false);
@@ -219,7 +245,7 @@ export const BusinessDetail = () => {
             Instruction History
           </h3>
 
-          {records.length === 0 ? (
+          {records.length === 0 && !loading ? (
             <div className="card p-20 text-center bg-slate-50 border-dashed">
               <FileText className="w-12 h-12 text-slate-300 mx-auto mb-4" />
               <p className="text-slate-500 font-medium">No instruction records found for this business.</p>
@@ -228,7 +254,8 @@ export const BusinessDetail = () => {
               </Link>
             </div>
           ) : (
-            <div className="space-y-6">
+            <>
+              <div className="space-y-6">
               {records.map(record => {
                 const isSupportActive = record.supportEndDate && isAfter(parseISO(record.supportEndDate), new Date());
                 
@@ -401,9 +428,21 @@ export const BusinessDetail = () => {
                 );
               })}
             </div>
-          )}
-        </div>
+            {hasMore && (
+              <div className="mt-8 flex justify-center">
+                <button
+                  onClick={() => fetchRecords(true)}
+                  disabled={loadingMore}
+                  className="px-8 py-3 bg-white border-2 border-slate-100 hover:border-tillmax-blue hover:text-tillmax-blue text-slate-600 font-bold rounded-2xl transition-all disabled:opacity-50 shadow-sm"
+                >
+                  {loadingMore ? 'Loading...' : 'Load More Records'}
+                </button>
+              </div>
+            )}
+          </>
+        )}
       </div>
+    </div>
 
       {/* Delete Confirmation Modal */}
       {recordToDelete && (

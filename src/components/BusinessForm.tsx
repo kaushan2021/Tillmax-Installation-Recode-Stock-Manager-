@@ -52,6 +52,8 @@ export const BusinessForm = () => {
     try {
       const data = {
         ...formData,
+        name_lowercase: formData.name?.toLowerCase(),
+        postcode_lowercase: formData.postcode?.toLowerCase(),
         updatedAt: serverTimestamp(),
       };
 
@@ -66,7 +68,7 @@ export const BusinessForm = () => {
       } else {
         const docRef = await addDoc(collection(db, 'businesses'), {
           ...data,
-          createdAt: new Date().toISOString(),
+          createdAt: serverTimestamp(),
         });
         await addDoc(collection(db, 'logs'), {
           userId: profile?.uid,

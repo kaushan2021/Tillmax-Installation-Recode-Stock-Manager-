@@ -3,12 +3,14 @@ export type UserRole = 'ADMIN' | 'EMPLOYEE';
 export interface Business {
   id?: string;
   name: string;
+  name_lowercase?: string;
   ownerName: string;
   telephone: string;
   contactNumber: string;
   email: string;
   address: string;
   postcode: string;
+  postcode_lowercase?: string;
   createdAt: string;
 }
 
@@ -35,6 +37,9 @@ export interface InstructionRecord {
   licenseNumbers: string[];
   teamViewerIds: string[];
   invoiceNumber: string;
+  invoiceNumber_lowercase?: string;
+  businessName?: string;
+  businessName_lowercase?: string;
   comments: string;
   renewalInformed?: boolean;
   renewalInformedMethod?: 'Email' | 'Text' | 'Other';

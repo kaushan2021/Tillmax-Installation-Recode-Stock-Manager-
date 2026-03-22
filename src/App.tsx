@@ -35,7 +35,8 @@ import {
   Save,
   MoreVertical,
   Download,
-  Filter
+  Filter,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -52,7 +53,11 @@ import {
   getDoc, 
   serverTimestamp,
   Timestamp,
-  getDocs
+  getDocs,
+  getCountFromServer,
+  startAfter,
+  or,
+  and
 } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { db, auth, handleFirestoreError, OperationType } from './firebase';
@@ -420,57 +425,53 @@ const Dashboard = () => {
     if (profile?.role === 'ADMIN') {
       const q = query(collection(db, 'logs'), orderBy('timestamp', 'desc'), limit(10));
       unsubscribe = onSnapshot(q, (snapshot) => {
-        setLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LogEntry)));
+        setLogs(snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as LogEntry)));
       }, (error) => {
         handleFirestoreError(error, OperationType.GET, 'logs');
       });
     }
 
-    // Fetch stats (simplified for now)
+    // Fetch stats (optimized for performance)
     const fetchStats = async () => {
       try {
-        const businesses = await getDocs(collection(db, 'businesses'));
-        const records = await getDocs(collection(db, 'instructionRecords'));
-        
-        let due = 0;
-        let active = 0;
-        let expiring = 0;
-        let expired = 0;
         const now = new Date();
         const nextMonth = addMonths(now, 1);
+        const nowIso = now.toISOString();
+        const nextMonthIso = nextMonth.toISOString();
 
-        records.docs.forEach(d => {
-          const data = d.data() as InstructionRecord;
-          if (data.paymentStatus === 'Payment due') due += data.paymentDueAmount || 0;
-          try {
-            if (data.supportEndDate) {
-              const endDate = parseISO(data.supportEndDate);
-              if (isAfter(endDate, now)) {
-                active++;
-                if (!isAfter(endDate, nextMonth)) {
-                  expiring++;
-                }
-              } else {
-                expired++;
-              }
-            } else {
-              expired++;
-            }
-          } catch (e) {
-            console.warn("Invalid date in record:", data.supportEndDate);
-          }
+        // Use getCountFromServer for total counts (very fast)
+        const [businessesCount, recordsCount] = await Promise.all([
+          getCountFromServer(collection(db, 'businesses')),
+          getCountFromServer(collection(db, 'instructionRecords'))
+        ]);
+
+        // Targeted queries for support status counts
+        const [activeCount, expiringCount, expiredCount] = await Promise.all([
+          getCountFromServer(query(collection(db, 'instructionRecords'), where('supportEndDate', '>', nowIso))),
+          getCountFromServer(query(collection(db, 'instructionRecords'), where('supportEndDate', '>', nowIso), where('supportEndDate', '<=', nextMonthIso))),
+          getCountFromServer(query(collection(db, 'instructionRecords'), where('supportEndDate', '<=', nowIso)))
+        ]);
+
+        // For payment due, we still need to fetch to sum the amounts
+        // But we only fetch the records that ARE due, not all 100k
+        const dueQuery = query(collection(db, 'instructionRecords'), where('paymentStatus', '==', 'Payment due'));
+        const dueSnap = await getDocs(dueQuery);
+        let dueAmount = 0;
+        dueSnap.forEach(d => {
+          dueAmount += (d.data() as InstructionRecord).paymentDueAmount || 0;
         });
 
         setStats({
-          totalBusinesses: businesses.size,
-          totalRecords: records.size,
-          paymentDue: due,
-          activeSupport: active,
-          expiringSoon: expiring,
-          expiredSupport: expired
+          totalBusinesses: businessesCount.data().count,
+          totalRecords: recordsCount.data().count,
+          paymentDue: dueAmount,
+          activeSupport: activeCount.data().count,
+          expiringSoon: expiringCount.data().count,
+          expiredSupport: expiredCount.data().count
         });
       } catch (error) {
-        handleFirestoreError(error, OperationType.GET, 'stats');
+        console.error("Stats fetch error:", error);
+        // Fallback to 0 if stats fail
       }
     };
 
@@ -612,21 +613,79 @@ const Dashboard = () => {
 const Businesses = () => {
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [search, setSearch] = useState('');
+  const [postcodeSearch, setPostcodeSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [lastDoc, setLastDoc] = useState<any>(null);
+  const [hasMore, setHasMore] = useState(true);
   const navigate = useNavigate();
   const { isAdmin, profile } = useAuth();
 
-  useEffect(() => {
+  const PAGE_SIZE = 20;
+
+  const fetchBusinesses = async (isNext = false) => {
     if (!profile) return;
-    const q = query(collection(db, 'businesses'), orderBy('name'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setBusinesses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Business)));
-      setLoading(false);
-    }, (error) => {
+    if (isNext) setLoadingMore(true);
+    else setLoading(true);
+
+    try {
+      let q;
+      if (search) {
+        const s = search.toLowerCase();
+        q = query(
+          collection(db, 'businesses'),
+          where('name_lowercase', '>=', s),
+          where('name_lowercase', '<=', s + '\uf8ff'),
+          orderBy('name_lowercase'),
+          limit(PAGE_SIZE)
+        );
+      } else if (postcodeSearch) {
+        const s = postcodeSearch.toLowerCase();
+        q = query(
+          collection(db, 'businesses'),
+          where('postcode_lowercase', '>=', s),
+          where('postcode_lowercase', '<=', s + '\uf8ff'),
+          orderBy('postcode_lowercase'),
+          limit(PAGE_SIZE)
+        );
+      } else {
+        q = query(
+          collection(db, 'businesses'),
+          orderBy('name'),
+          limit(PAGE_SIZE)
+        );
+      }
+
+      if (isNext && lastDoc) {
+        q = query(q, startAfter(lastDoc));
+      }
+
+      const snapshot = await getDocs(q);
+      const newBusinesses = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as Business));
+      
+      if (isNext) {
+        setBusinesses(prev => [...prev, ...newBusinesses]);
+      } else {
+        setBusinesses(newBusinesses);
+      }
+
+      setLastDoc(snapshot.docs[snapshot.docs.length - 1]);
+      setHasMore(snapshot.docs.length === PAGE_SIZE);
+    } catch (error) {
       handleFirestoreError(error, OperationType.GET, 'businesses');
-    });
-    return () => unsubscribe();
-  }, [profile]);
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  };
+
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(() => {
+      fetchBusinesses();
+    }, 800);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [search, postcodeSearch, profile]);
 
   const [businessToDelete, setBusinessToDelete] = useState<{ id: string, name: string } | null>(null);
 
@@ -646,10 +705,15 @@ const Businesses = () => {
     }
   };
 
-  const filtered = businesses.filter(b => 
-    b.name.toLowerCase().includes(search.toLowerCase()) || 
-    b.postcode.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = businesses.filter(b => {
+    if (!search && !postcodeSearch) return true;
+    const s = search.toLowerCase();
+    const p = postcodeSearch.toLowerCase();
+    return (
+      (search && (b.name_lowercase?.includes(s) || b.name?.toLowerCase().includes(s))) ||
+      (postcodeSearch && (b.postcode_lowercase?.includes(p) || b.postcode?.toLowerCase().includes(p)))
+    );
+  });
 
   return (
     <div>
@@ -664,18 +728,42 @@ const Businesses = () => {
         )}
       />
 
-      <div className="card p-4 mb-8 flex items-center gap-3">
-        <Search className="w-5 h-5 text-slate-400" />
-        <input 
-          type="text" 
-          placeholder="Search by business name or postcode..." 
-          className="flex-1 outline-none text-slate-900"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+      <div className="flex flex-col md:flex-row gap-4 mb-8">
+        <div className="card p-4 flex-1 flex items-center gap-3 relative">
+          <Search className="w-5 h-5 text-slate-400" />
+          <input 
+            type="text" 
+            placeholder="Search by business name..." 
+            className="flex-1 outline-none text-slate-900"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPostcodeSearch('');
+            }}
+          />
+          {loading && search && (
+            <RefreshCw className="w-4 h-4 text-tillmax-blue animate-spin absolute right-4" />
+          )}
+        </div>
+        <div className="card p-4 flex-1 flex items-center gap-3 relative">
+          <MapPin className="w-5 h-5 text-slate-400" />
+          <input 
+            type="text" 
+            placeholder="Search by postcode..." 
+            className="flex-1 outline-none text-slate-900"
+            value={postcodeSearch}
+            onChange={(e) => {
+              setPostcodeSearch(e.target.value);
+              setSearch('');
+            }}
+          />
+          {loading && postcodeSearch && (
+            <RefreshCw className="w-4 h-4 text-tillmax-blue animate-spin absolute right-4" />
+          )}
+        </div>
       </div>
 
-      {loading ? (
+      {loading && businesses.length === 0 ? (
         <div className="flex justify-center p-20">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-tillmax-blue"></div>
         </div>
@@ -736,6 +824,20 @@ const Businesses = () => {
         </div>
       )}
 
+      {/* Load More */}
+      {hasMore && !loading && (
+        <div className="mt-12 flex justify-center">
+          <button 
+            onClick={() => fetchBusinesses(true)}
+            disabled={loadingMore}
+            className="px-8 py-3 bg-white border border-slate-200 text-slate-600 font-bold rounded-2xl hover:bg-slate-50 transition-all shadow-sm disabled:opacity-50 flex items-center gap-2"
+          >
+            {loadingMore ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
+            {loadingMore ? 'Loading...' : 'Load More Businesses'}
+          </button>
+        </div>
+      )}
+
       {/* Delete Business Confirmation Modal */}
       <AnimatePresence>
         {businessToDelete && (
@@ -780,13 +882,117 @@ const Businesses = () => {
 const InstructionRecords = () => {
   const [records, setRecords] = useState<(InstructionRecord & { businessName?: string })[]>([]);
   const [search, setSearch] = useState('');
+  const [invoiceSearch, setInvoiceSearch] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
   const statusFilter = searchParams.get('status');
   const quickFilter = searchParams.get('filter');
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [lastDoc, setLastDoc] = useState<any>(null);
+  const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
   const { profile, isAdmin } = useAuth();
+
+  const PAGE_SIZE = 20;
+
+  const fetchRecords = async (isNext = false) => {
+    if (!profile) return;
+    if (isNext) setLoadingMore(true);
+    else setLoading(true);
+
+    try {
+      let q = query(collection(db, 'instructionRecords'));
+
+      // Server-side filtering
+      if (statusFilter) {
+        q = query(q, where('paymentStatus', '==', statusFilter));
+      }
+
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const nextMonth = addMonths(now, 1);
+      const nextMonthIso = nextMonth.toISOString();
+
+      if (quickFilter === 'expiring') {
+        q = query(q, where('supportEndDate', '>', nowIso), where('supportEndDate', '<=', nextMonthIso));
+      } else if (quickFilter === 'expired') {
+        q = query(q, where('supportEndDate', '<=', nowIso));
+      }
+
+      // Server-side search
+      if (search) {
+        const s = search.toLowerCase();
+        q = query(
+          q, 
+          where('businessName_lowercase', '>=', s), 
+          where('businessName_lowercase', '<=', s + '\uf8ff'),
+          orderBy('businessName_lowercase')
+        );
+      } else if (invoiceSearch) {
+        const s = invoiceSearch.toLowerCase();
+        q = query(
+          q, 
+          where('invoiceNumber_lowercase', '>=', s), 
+          where('invoiceNumber_lowercase', '<=', s + '\uf8ff'),
+          orderBy('invoiceNumber_lowercase')
+        );
+      } else {
+        // Order and limit
+        q = query(q, orderBy('installationDate', 'desc'));
+      }
+
+      q = query(q, limit(PAGE_SIZE));
+
+      if (isNext && lastDoc) {
+        q = query(q, startAfter(lastDoc));
+      }
+
+      const snapshot = await getDocs(q);
+      const recordsData = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as InstructionRecord));
+      
+      // Fetch business names for these records only if not already present
+      const businessIds = [...new Set(recordsData.filter(r => !r.businessName).map(r => r.businessId))];
+      const businessMap = new Map<string, string>();
+      
+      if (businessIds.length > 0) {
+        await Promise.all(businessIds.map(async (bid) => {
+          const bDoc = await getDoc(doc(db, 'businesses', bid));
+          if (bDoc.exists()) {
+            businessMap.set(bid, (bDoc.data() as Business).name);
+          }
+        }));
+      }
+
+      const enrichedRecords = recordsData.map(r => ({
+        ...r,
+        businessName: r.businessName || businessMap.get(r.businessId) || 'Unknown Business'
+      }));
+
+      if (isNext) {
+        setRecords(prev => [...prev, ...enrichedRecords]);
+      } else {
+        setRecords(enrichedRecords);
+      }
+
+      setLastDoc(snapshot.docs[snapshot.docs.length - 1]);
+      setHasMore(snapshot.docs.length === PAGE_SIZE);
+    } catch (err) {
+      console.error("Records fetch error:", err);
+      setError("Failed to load records.");
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  };
+
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(() => {
+      fetchRecords();
+    }, 800);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [search, invoiceSearch, statusFilter, quickFilter, profile]);
 
   const [recordToDelete, setRecordToDelete] = useState<{ id: string, invoice: string } | null>(null);
 
@@ -801,83 +1007,23 @@ const InstructionRecords = () => {
         timestamp: new Date().toISOString(),
       });
       setRecordToDelete(null);
+      fetchRecords(); // Refresh current view
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `instructionRecords/${recordToDelete.id}`);
     }
   };
 
-  useEffect(() => {
-    if (!profile) return;
-    let unsubscribeRecords: () => void;
-    
-    const setupListeners = async () => {
-      try {
-        // Fetch businesses once for the map
-        const businessesSnap = await getDocs(collection(db, 'businesses'));
-        const businessMap = new Map(businessesSnap.docs.map(d => [d.id, (d.data() as Business).name]));
-
-        const q = query(collection(db, 'instructionRecords'), orderBy('installationDate', 'desc'));
-        unsubscribeRecords = onSnapshot(q, (snapshot) => {
-          const recordsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as InstructionRecord));
-          
-          setRecords(recordsData.map(r => ({
-            ...r,
-            businessName: businessMap.get(r.businessId) || 'Unknown Business'
-          })));
-          setLoading(false);
-        }, (error) => {
-          handleFirestoreError(error, OperationType.GET, 'instructionRecords');
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.GET, 'instructionRecords-init');
-        setError("Failed to initialize records view.");
-        setLoading(false);
-      }
-    };
-
-    setupListeners();
-    return () => {
-      if (unsubscribeRecords) unsubscribeRecords();
-    };
-  }, [profile]);
-
   const filtered = records.filter(r => {
-    const matchesSearch = (r.businessName || '').toLowerCase().includes(search.toLowerCase()) || 
-                         (r.invoiceNumber || '').toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = !statusFilter || r.paymentStatus === statusFilter;
-    
-    let matchesQuickFilter = true;
-    if (quickFilter === 'expiring') {
-      const now = new Date();
-      const nextMonth = addMonths(now, 1);
-      try {
-        if (r.supportEndDate) {
-          const endDate = parseISO(r.supportEndDate);
-          matchesQuickFilter = isAfter(endDate, now) && !isAfter(endDate, nextMonth);
-        } else {
-          matchesQuickFilter = false;
-        }
-      } catch (e) {
-        matchesQuickFilter = false;
-      }
-    } else if (quickFilter === 'expired') {
-      const now = new Date();
-      try {
-        if (r.supportEndDate) {
-          const endDate = parseISO(r.supportEndDate);
-          matchesQuickFilter = !isAfter(endDate, now);
-        } else {
-          matchesQuickFilter = true; // No end date means expired/not set
-        }
-      } catch (e) {
-        matchesQuickFilter = true;
-      }
-    }
-
-    return matchesSearch && matchesStatus && matchesQuickFilter;
+    if (!search && !invoiceSearch) return true;
+    const s = search.toLowerCase();
+    const i = invoiceSearch.toLowerCase();
+    return (
+      (search && (r.businessName?.toLowerCase().includes(s) || r.businessName_lowercase?.includes(s))) ||
+      (invoiceSearch && (r.invoiceNumber?.toLowerCase().includes(i) || r.invoiceNumber_lowercase?.includes(i)))
+    );
   });
 
-  if (loading) {
+  if (loading && records.length === 0) {
     return (
       <div className="flex justify-center p-20">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-tillmax-blue"></div>
@@ -904,17 +1050,41 @@ const InstructionRecords = () => {
         subtitle="View and manage all installation records."
       />
 
-      <div className="card p-4 mb-8 flex flex-col md:flex-row items-center gap-4">
-        <div className="flex-1 flex items-center gap-3 w-full">
+      <div className="flex flex-col md:flex-row gap-4 mb-8">
+        <div className="card p-4 flex-1 flex items-center gap-3 relative">
           <Search className="w-5 h-5 text-slate-400" />
           <input 
             type="text" 
-            placeholder="Search by business name or invoice number..." 
+            placeholder="Search by business name..." 
             className="flex-1 outline-none text-slate-900"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setInvoiceSearch('');
+            }}
           />
+          {loading && search && (
+            <RefreshCw className="w-4 h-4 text-tillmax-blue animate-spin absolute right-4" />
+          )}
         </div>
+        <div className="card p-4 flex-1 flex items-center gap-3 relative">
+          <FileText className="w-5 h-5 text-slate-400" />
+          <input 
+            type="text" 
+            placeholder="Search by invoice number..." 
+            className="flex-1 outline-none text-slate-900"
+            value={invoiceSearch}
+            onChange={(e) => {
+              setInvoiceSearch(e.target.value);
+              setSearch('');
+            }}
+          />
+          {loading && invoiceSearch && (
+            <RefreshCw className="w-4 h-4 text-tillmax-blue animate-spin absolute right-4" />
+          )}
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2 mb-8">
         {statusFilter && (
           <div className="flex items-center gap-2 bg-tillmax-red/10 text-tillmax-red px-4 py-2 rounded-xl text-sm font-bold">
             <Filter className="w-4 h-4" />
@@ -976,78 +1146,92 @@ const InstructionRecords = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
-            {filtered.map(record => {
-              const isSupportActive = record.supportEndDate && isAfter(parseISO(record.supportEndDate), new Date());
-              return (
-                <tr key={record.id} className="hover:bg-slate-50/50 transition-colors">
-                  <td className="px-6 py-4">
-                    {record.businessId ? (
-                      <Link to={`/businesses/${record.businessId}`} className="font-bold text-slate-900 hover:text-tillmax-blue transition-colors">
-                        {record.businessName}
-                      </Link>
-                    ) : (
-                      <span className="font-bold text-slate-900">{record.businessName}</span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 font-mono text-sm text-slate-500">{record.invoiceNumber}</td>
-                  <td className="px-6 py-4 text-slate-600 text-sm">
-                    {(() => {
-                      try {
-                        return record.installationDate ? format(parseISO(record.installationDate), 'MMM d, yyyy') : 'N/A';
-                      } catch (e) {
-                        return 'Invalid Date';
-                      }
-                    })()}
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={cn(
-                      "px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest",
-                      isSupportActive ? "bg-emerald-100 text-emerald-600" : "bg-red-100 text-red-600"
-                    )}>
-                      {isSupportActive ? 'Active' : 'Expired'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    {record.renewalInformed ? (
-                      <div className="flex flex-col">
-                        <span className="text-[10px] font-black text-tillmax-blue uppercase tracking-widest">Informed</span>
-                        <span className="text-[10px] text-slate-400">{record.renewalInformedMethod}</span>
-                      </div>
-                    ) : (
-                      <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Pending</span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={cn(
-                      "text-sm font-bold",
-                      record.paymentStatus === 'Payment cleared' ? "text-emerald-600" : "text-tillmax-red"
-                    )}>
-                      {record.paymentStatus}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      {isAdmin && (
-                        <button 
-                          onClick={() => setRecordToDelete({ id: record.id!, invoice: record.invoiceNumber })}
-                          className="p-2 text-slate-400 hover:text-red-500 transition-colors"
-                          title="Delete Record"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+            {filtered.length === 0 && !loading ? (
+              <tr>
+                <td colSpan={7} className="px-6 py-10 text-center text-slate-400">No records found</td>
+              </tr>
+            ) : (
+              filtered.map(record => {
+                const isSupportActive = record.supportEndDate && isAfter(parseISO(record.supportEndDate), new Date());
+                return (
+                  <tr key={record.id} className="hover:bg-slate-50/50 transition-colors">
+                    <td className="px-6 py-4">
+                      {record.businessId ? (
+                        <Link to={`/businesses/${record.businessId}`} className="font-bold text-slate-900 hover:text-tillmax-blue transition-colors">
+                          {record.businessName}
+                        </Link>
+                      ) : (
+                        <span className="font-bold text-slate-900">{record.businessName}</span>
                       )}
-                      <Link to={`/records/${record.id}/edit`} className="p-2 text-slate-400 hover:text-tillmax-blue transition-colors">
-                        <Edit2 className="w-4 h-4" />
-                      </Link>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
+                    </td>
+                    <td className="px-6 py-4 font-mono text-sm text-slate-500">{record.invoiceNumber}</td>
+                    <td className="px-6 py-4 text-slate-600 text-sm">
+                      {(() => {
+                        try {
+                          return record.installationDate ? format(parseISO(record.installationDate), 'MMM d, yyyy') : 'N/A';
+                        } catch (e) {
+                          return 'Invalid Date';
+                        }
+                      })()}
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={cn(
+                        "px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest",
+                        isSupportActive ? "bg-emerald-100 text-emerald-600" : "bg-red-100 text-red-600"
+                      )}>
+                        {isSupportActive ? 'Active' : 'Expired'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      {record.renewalInformed ? (
+                        <div className="flex flex-col">
+                          <span className="text-[10px] font-black text-tillmax-blue uppercase tracking-widest">Informed</span>
+                          <span className="text-[10px] text-slate-400">{record.renewalInformedMethod}</span>
+                        </div>
+                      ) : (
+                        <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Pending</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={cn(
+                        "text-sm font-bold",
+                        record.paymentStatus === 'Payment cleared' ? "text-emerald-600" : "text-tillmax-red"
+                      )}>
+                        {record.paymentStatus}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        {isAdmin && (
+                          <button 
+                            onClick={() => setRecordToDelete({ id: record.id!, invoice: record.invoiceNumber })}
+                            className="p-2 text-slate-400 hover:text-red-500 transition-colors"
+                            title="Delete Record"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                        <Link to={`/records/${record.id}/edit`} className="p-2 text-slate-400 hover:text-tillmax-blue transition-colors">
+                          <Edit2 className="w-4 h-4" />
+                        </Link>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
           </tbody>
         </table>
-        {filtered.length === 0 && !loading && (
-          <div className="p-20 text-center text-slate-400">No records found.</div>
+        {hasMore && (
+          <div className="p-4 border-t border-slate-100 flex justify-center">
+            <button
+              onClick={() => fetchRecords(true)}
+              disabled={loadingMore}
+              className="px-6 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-bold rounded-xl transition-colors disabled:opacity-50"
+            >
+              {loadingMore ? 'Loading...' : 'Load More Records'}
+            </button>
+          </div>
         )}
       </div>
 
