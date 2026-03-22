@@ -1,0 +1,5 @@
+{
+  "name": "Tillmax Instruction Records Manager",
+  "description": "A comprehensive system for Tillmax LTD to manage EPOS installation records, support status, and customer history, replacing manual Excel tracking.",
+  "requestFramePermissions": []
+}

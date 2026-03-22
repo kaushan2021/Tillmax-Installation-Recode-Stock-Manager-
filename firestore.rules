@@ -1,0 +1,131 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users
+// Document ID: Firebase UID
+// Fields:
+//   - email: string (required)
+//   - username: string (required)
+//   - role: string (ADMIN, EMPLOYEE)
+//   - createdAt: string
+//
+// Collection: businesses
+// Fields:
+//   - name: string (required)
+//   - postcode: string (required)
+//   - ownerName: string
+//   - telephone: string
+//   - contactNumber: string
+//   - email: string
+//   - address: string
+//   - createdAt: string
+//
+// Collection: instructionRecords
+// Fields:
+//   - businessId: string (required)
+//   - invoiceNumber: string
+//   - installationDate: string
+//   - supportType: string
+//   - supportStatus: string
+//   - supportStartDate: string
+//   - supportEndDate: string
+//   - equipment: list
+//   - paymentAmount: number
+//   - paymentStatus: string
+//   - paymentDueAmount: number
+//   - salesPerson: string
+//   - engineer: string
+//   - softwareType: string
+//   - licenseNumbers: list
+//   - teamViewerIds: list
+//   - comments: string
+//
+// Collection: logs
+// Fields:
+//   - userId: string
+//   - username: string
+//   - action: string
+//   - timestamp: string
+//
+// Collection: equipmentTypes, salesPeople, engineers, softwareTypes
+// Fields:
+//   - name: string
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN') ||
+        request.auth.token.email == "pasi@tillmax.co.uk"
+      );
+    }
+
+    function isEmployee() {
+      return isAuthenticated() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'EMPLOYEE') || 
+        isAdmin()
+      );
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /businesses/{businessId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isEmployee();
+      allow delete: if isAdmin();
+    }
+
+    match /instructionRecords/{recordId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isEmployee();
+      allow delete: if isAdmin();
+    }
+
+    match /logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated();
+    }
+
+    match /equipmentTypes/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /salesPeople/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /engineers/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /softwareTypes/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+  }
+}

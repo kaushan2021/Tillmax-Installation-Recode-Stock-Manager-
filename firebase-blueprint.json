@@ -1,0 +1,112 @@
+{
+  "entities": {
+    "Business": {
+      "title": "Business",
+      "description": "A customer business profile",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Business Name" },
+        "ownerName": { "type": "string", "description": "Business Owner Name" },
+        "telephone": { "type": "string", "description": "Shop Telephone number" },
+        "contactNumber": { "type": "string", "description": "Owners contact number" },
+        "email": { "type": "string", "format": "email", "description": "Email address" },
+        "address": { "type": "string", "description": "Business Address" },
+        "postcode": { "type": "string", "description": "Postcode" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "postcode"]
+    },
+    "InstructionRecord": {
+      "title": "Instruction Record",
+      "description": "A record of an installation or support instruction",
+      "type": "object",
+      "properties": {
+        "businessId": { "type": "string", "description": "Reference to Business ID" },
+        "supportType": { "type": "string", "enum": ["Online and telephone support", "Return to base", "On site"], "description": "Support Type" },
+        "supportStatus": { "type": "string", "description": "Support Status" },
+        "supportStartDate": { "type": "string", "format": "date", "description": "Support starting date" },
+        "supportEndDate": { "type": "string", "format": "date", "description": "Support end date" },
+        "installationDate": { "type": "string", "format": "date", "description": "Installation date" },
+        "equipment": { 
+          "type": "array", 
+          "items": { 
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "quantity": { "type": "number" }
+            }
+          },
+          "description": "Equipment purchased" 
+        },
+        "paymentAmount": { "type": "number", "description": "Payment amount" },
+        "paymentStatus": { "type": "string", "enum": ["Payment cleared", "Payment due"], "description": "Payment status" },
+        "paymentDueAmount": { "type": "number", "description": "Payment due amount" },
+        "salesPerson": { "type": "string", "description": "Sales person name" },
+        "engineer": { "type": "string", "description": "Engineer name" },
+        "softwareType": { "type": "string", "description": "Epos software type" },
+        "licenseNumbers": { "type": "array", "items": { "type": "string" }, "description": "License numbers" },
+        "teamViewerIds": { "type": "array", "items": { "type": "string" }, "description": "TeamViewer IDs" },
+        "invoiceNumber": { "type": "string", "description": "Invoice Number" },
+        "comments": { "type": "string", "description": "Comments" },
+        "renewalInformed": { "type": "boolean", "description": "Whether customer was informed about renewal" },
+        "renewalInformedMethod": { "type": "string", "enum": ["Email", "Text", "Other"], "description": "Communication method for renewal" },
+        "renewalInformedDate": { "type": "string", "format": "date", "description": "Date customer was informed" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["businessId", "installationDate"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Application user profile",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "username": { "type": "string" },
+        "role": { "type": "string", "enum": ["ADMIN", "EMPLOYEE"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "role"]
+    },
+    "Log": {
+      "title": "Log",
+      "description": "User activity log",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "username": { "type": "string" },
+        "action": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "EquipmentType": {
+      "title": "Equipment Type",
+      "type": "object",
+      "properties": { "name": { "type": "string" } }
+    },
+    "SalesPerson": {
+      "title": "Sales Person",
+      "type": "object",
+      "properties": { "name": { "type": "string" } }
+    },
+    "Engineer": {
+      "title": "Engineer",
+      "type": "object",
+      "properties": { "name": { "type": "string" } }
+    },
+    "SoftwareType": {
+      "title": "Software Type",
+      "type": "object",
+      "properties": { "name": { "type": "string" } }
+    }
+  },
+  "firestore": {
+    "/businesses": { "schema": "Business", "description": "Collection of businesses" },
+    "/instructionRecords": { "schema": "InstructionRecord", "description": "Collection of instruction records" },
+    "/users": { "schema": "User", "description": "Collection of users" },
+    "/logs": { "schema": "Log", "description": "Collection of activity logs" },
+    "/equipmentTypes": { "schema": "EquipmentType", "description": "Collection of equipment types" },
+    "/salesPeople": { "schema": "SalesPerson", "description": "Collection of sales people" },
+    "/engineers": { "schema": "Engineer", "description": "Collection of engineers" },
+    "/softwareTypes": { "schema": "SoftwareType", "description": "Collection of software types" }
+  }
+}
