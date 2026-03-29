@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { secondaryAuth, createUserWithEmailAndPassword, db, handleFirestoreError, OperationType } from '../firebase';
+import { db, handleFirestoreError, OperationType, auth as clientAuth } from '../firebase';
 import { setDoc, collection, query, orderBy, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDoc, serverTimestamp, writeBatch, getDocs, limit, startAfter, getCountFromServer } from 'firebase/firestore';
 import { useAuth } from '../AuthProvider';
-import { UserProfile, SimpleEntity, UserRole, Business, InstructionRecord } from '../types';
+import { UserProfile, SimpleEntity, UserRole, Business, InstallationRecord, EmailTemplate, SystemSetting } from '../types';
 import { 
   Users, 
   Shield, 
+  ShieldAlert,
   Trash2, 
   Plus, 
   Edit2, 
@@ -22,21 +23,40 @@ import {
   AlertCircle,
   RefreshCw,
   CheckCircle,
-  FileText
+  FileText,
+  Download,
+  Settings,
+  History,
+  Send,
+  Copy,
+  FileSpreadsheet,
+  Check,
+  Clock,
+  AlertTriangle,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { clsx } from 'clsx';
+import { cn, formatDate, parseDate } from '../lib/utils';
+import { useUserManagement } from '../hooks/useUserManagement';
+import { UserForm } from './admin/UserForm';
+import { UserList } from './admin/UserList';
+import { ConfirmationModal } from './admin/ConfirmationModal';
 
 export const AdminPanel = () => {
   const { profile, isAdmin } = useAuth();
-  const [activeTab, setActiveTab] = useState<'users' | 'lookups' | 'maintenance'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'lookups' | 'renewals' | 'templates' | 'settings' | 'maintenance'>('users');
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!isAdmin) return;
-    const q = query(collection(db, 'users'), orderBy('username'));
+    const q = query(collection(db, 'users'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      setUsers(snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile)));
+      const allUsers = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
+      // Sort in memory instead to avoid filtering out users missing the 'username' field
+      allUsers.sort((a, b) => (a.username || '').localeCompare(b.username || ''));
+      setUsers(allUsers);
       setLoading(false);
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, 'users');
@@ -44,243 +64,987 @@ export const AdminPanel = () => {
     return () => unsubscribe();
   }, [isAdmin]);
 
-  if (!isAdmin) return <div className="p-20 text-center card text-red-500 font-bold">Access Denied</div>;
+  if (!isAdmin) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto">
+            <ShieldAlert className="w-8 h-8" />
+          </div>
+          <h2 className="text-2xl font-bold text-slate-900">Access Denied</h2>
+          <p className="text-slate-500 max-w-md">
+            You do not have administrative privileges to access this panel.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const tabs = [
+    { id: 'users', label: 'Users', icon: Users },
+    { id: 'lookups', label: 'Lookup Tables', icon: Package },
+    { id: 'renewals', label: 'Renewals', icon: RefreshCw },
+    { id: 'templates', label: 'Templates', icon: FileText },
+    { id: 'settings', label: 'SMTP Settings', icon: Settings },
+    { id: 'maintenance', label: 'Maintenance', icon: Wrench },
+  ];
 
   return (
-    <div>
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Admin Panel</h1>
-          <p className="text-slate-500 mt-1">Manage users and system configuration.</p>
+    <div className="space-y-8">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 bg-tillmax-blue text-white rounded-2xl flex items-center justify-center shadow-lg shadow-tillmax-blue/20">
+            <Settings className="w-6 h-6" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Admin Control Panel</h1>
+            <p className="text-slate-500 text-sm">Manage users, system settings, and maintenance</p>
+          </div>
         </div>
-        <div className="flex bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
-          <button 
-            onClick={() => setActiveTab('users')}
-            className={clsx(
-              "px-6 py-2 rounded-lg font-bold text-sm transition-all",
-              activeTab === 'users' ? "bg-tillmax-blue text-white shadow-md" : "text-slate-500 hover:text-tillmax-blue"
-            )}
-          >
-            Users
-          </button>
-          <button 
-            onClick={() => setActiveTab('lookups')}
-            className={clsx(
-              "px-6 py-2 rounded-lg font-bold text-sm transition-all",
-              activeTab === 'lookups' ? "bg-tillmax-blue text-white shadow-md" : "text-slate-500 hover:text-tillmax-blue"
-            )}
-          >
-            Lookup Tables
-          </button>
-          <button 
-            onClick={() => setActiveTab('maintenance')}
-            className={clsx(
-              "px-6 py-2 rounded-lg font-bold text-sm transition-all",
-              activeTab === 'maintenance' ? "bg-tillmax-blue text-white shadow-md" : "text-slate-500 hover:text-tillmax-blue"
-            )}
-          >
-            Maintenance
-          </button>
+
+        <div className="flex flex-wrap bg-white p-1 rounded-xl border border-slate-200 shadow-sm gap-1">
+          {tabs.map(tab => (
+            <button 
+              key={tab.id}
+              data-tab={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={clsx(
+                "px-4 py-2 rounded-lg font-bold text-sm transition-all flex items-center gap-2",
+                activeTab === tab.id ? "bg-tillmax-blue text-white shadow-md" : "text-slate-500 hover:text-tillmax-blue"
+              )}
+            >
+              <tab.icon className="w-4 h-4" />
+              {tab.label}
+            </button>
+          ))}
         </div>
       </div>
 
       {activeTab === 'users' && <UserManagement users={users} loading={loading} />}
       {activeTab === 'lookups' && <LookupManagement />}
+      {activeTab === 'renewals' && <RenewalManagement onSwitchTab={setActiveTab} />}
+      {activeTab === 'templates' && <TemplateManager />}
+      {activeTab === 'settings' && <SmtpSettings />}
       {activeTab === 'maintenance' && <MaintenancePanel />}
     </div>
   );
 };
 
-const UserManagement = ({ users, loading }: { users: UserProfile[], loading: boolean }) => {
+const RenewalManagement = ({ onSwitchTab }: { onSwitchTab?: (tab: any) => void }) => {
+  const [records, setRecords] = useState<InstallationRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [templates, setTemplates] = useState<EmailTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
+  const [sending, setSending] = useState(false);
+  const [progress, setProgress] = useState({ current: 0, total: 0 });
+  const [status, setStatus] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
   const { profile } = useAuth();
-  const [showAdd, setShowAdd] = useState(false);
-  const [formData, setFormData] = useState({ email: '', username: '', role: 'EMPLOYEE' as UserRole, password: '' });
-  const [isCreating, setIsCreating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  const handleAddUser = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (formData.password.length < 6) return setError("Password must be at least 6 characters.");
-    
-    setIsCreating(true);
-    setError(null);
+  useEffect(() => {
+    const fetchRenewals = async () => {
+      setLoading(true);
+      try {
+        const now = new Date();
+        const thirtyDaysFromNow = new Date();
+        thirtyDaysFromNow.setDate(now.getDate() + 30);
+        
+        const thirtyDaysStr = thirtyDaysFromNow.toISOString().split('T')[0];
+
+        // Query for records expiring soon or already expired
+        const q = query(collection(db, 'installationRecords'), orderBy('supportEndDate', 'asc'));
+        const snapshot = await getDocs(q);
+        
+        const allRecords = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as InstallationRecord));
+        
+        // Filter: supportEndDate <= thirtyDaysStr
+        const renewals = showAll ? allRecords : allRecords.filter(r => r.supportEndDate && r.supportEndDate <= thirtyDaysStr);
+
+        // Fetch business details for each renewal record
+        const businessesSnap = await getDocs(collection(db, 'businesses'));
+        const businessesMap = new Map(businessesSnap.docs.map(doc => [doc.id, doc.data() as Business]));
+
+        const enrichedRenewals = renewals.map(r => ({
+          ...r,
+          businessName: businessesMap.get(r.businessId)?.name || 'Unknown Business',
+          businessEmail: businessesMap.get(r.businessId)?.email || 'N/A',
+          businessContact: businessesMap.get(r.businessId)?.contactNumber || 'N/A'
+        }));
+
+        setRecords(enrichedRenewals as any);
+
+        // Fetch templates
+        const tSnap = await getDocs(query(collection(db, 'emailTemplates'), orderBy('name')));
+        const tList = tSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as EmailTemplate));
+        setTemplates(tList);
+        if (tList.length > 0) setSelectedTemplateId(tList[0].id!);
+
+      } catch (error) {
+        handleFirestoreError(error, OperationType.GET, 'installationRecords');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchRenewals();
+  }, [showAll]);
+
+  const handleSelectAll = () => {
+    if (selectedIds.length === records.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(records.map(r => r.id!));
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  };
+
+  const exportToExcel = () => {
     try {
-      // Create user in Firebase Auth using secondary instance
-      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, formData.email, formData.password);
-      const newUser = userCredential.user;
+      const headers = ["Business Name", "Support End Date", "Support Status", "Invoice Number", "Email", "Contact Number", "Informed?", "Informed Date"];
+      const rows = records.map((r: any) => [
+        r.businessName,
+        r.supportEndDate,
+        r.supportStatus,
+        r.invoiceNumber,
+        r.businessEmail || 'N/A',
+        r.businessContact || 'N/A',
+        r.renewalInformed ? 'Yes' : 'No',
+        r.renewalInformedDate || 'N/A'
+      ]);
 
-      // Create profile in Firestore
-      await setDoc(doc(db, 'users', newUser.uid), {
-        uid: newUser.uid,
-        email: formData.email,
-        username: formData.username,
-        role: formData.role,
-        createdAt: new Date().toISOString(),
+      const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      link.setAttribute("href", url);
+      link.setAttribute("download", `renewals_${new Date().toISOString().split('T')[0]}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (error) {
+      console.error("Export failed", error);
+    }
+  };
+
+  const sendBulkEmails = async () => {
+    if (selectedIds.length === 0 || !selectedTemplateId) return;
+    
+    setSending(true);
+    setProgress({ current: 0, total: selectedIds.length });
+    setStatus("Preparing to send emails...");
+
+    try {
+      // 1. Fetch SMTP settings
+      const smtpDoc = await getDoc(doc(db, 'systemSettings', 'smtp'));
+      if (!smtpDoc.exists()) {
+        throw new Error("SMTP settings not found. Please configure them in the Settings tab.");
+      }
+      const smtpSettings = smtpDoc.data() as SystemSetting;
+
+      // 2. Get the selected template
+      const template = templates.find(t => t.id === selectedTemplateId);
+      if (!template) {
+        throw new Error("Selected template not found.");
+      }
+
+      const selectedRecords = records.filter(r => selectedIds.includes(r.id!));
+      
+      for (let i = 0; i < selectedRecords.length; i++) {
+        const record = selectedRecords[i];
+        setStatus(`Sending email to ${record.businessName}...`);
+        
+        // Fetch business email
+        const bDoc = await getDoc(doc(db, 'businesses', record.businessId));
+        const businessData = bDoc.exists() ? bDoc.data() : null;
+        const recipientEmail = businessData?.email;
+
+        if (!recipientEmail) {
+          console.warn(`No email found for business: ${record.businessName}`);
+          setProgress(prev => ({ ...prev, current: i + 1 }));
+          continue;
+        }
+
+        // 3. Replace tags in template body and subject
+        let htmlBody = template.body;
+        let subject = template.subject;
+
+        const replacements = {
+          '{businessName}': record.businessName,
+          '{supportEndDate}': formatDate(record.supportEndDate, 'dd MMM yyyy'),
+          '{invoiceNumber}': record.invoiceNumber
+        };
+
+        Object.entries(replacements).forEach(([tag, val]) => {
+          htmlBody = htmlBody.split(tag).join(val);
+          subject = subject.split(tag).join(val);
+        });
+
+        // 4. Call our backend API
+        const response = await fetch('/api/send-renewal-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: recipientEmail,
+            subject: subject,
+            html: htmlBody,
+            smtpConfig: {
+              user: smtpSettings.gmailUser,
+              pass: smtpSettings.gmailAppPassword,
+              senderName: smtpSettings.senderName
+            }
+          })
+        });
+
+        if (!response.ok) {
+          const contentType = response.headers.get("content-type");
+          let errData;
+          if (contentType && contentType.includes("application/json")) {
+            errData = await response.json();
+          } else {
+            const text = await response.text();
+            throw new Error(`Server returned non-JSON response (${response.status}): ${text.substring(0, 100)}...`);
+          }
+          throw new Error(errData.error || "Failed to send email");
+        }
+
+        // Update record in Firestore to mark as informed
+        await updateDoc(doc(db, 'installationRecords', record.id!), {
+          renewalInformed: true,
+          renewalInformedDate: new Date().toISOString().split('T')[0],
+          renewalInformedMethod: 'Email'
+        });
+
+        setProgress(prev => ({ ...prev, current: i + 1 }));
+      }
+
+      setStatus("All selected emails have been sent successfully!");
+      await addDoc(collection(db, 'logs'), {
+        userId: profile?.uid,
+        username: profile?.username,
+        action: `sent bulk renewal emails to ${selectedIds.length} customers`,
+        timestamp: new Date().toISOString(),
       });
+
+      // Clear selection
+      setSelectedIds([]);
+      
+      // Refresh records to show updated "Informed" status
+      const updatedRecords = records.map(r => 
+        selectedIds.includes(r.id!) 
+          ? { ...r, renewalInformed: true, renewalInformedDate: new Date().toISOString().split('T')[0], renewalInformedMethod: 'Email' as const } 
+          : r
+      );
+      setRecords(updatedRecords);
+
+    } catch (error) {
+      console.error("Bulk email failed", error);
+      setStatus(`ERROR: ${error instanceof Error ? error.message : "Failed to send some emails"}`);
+    } finally {
+      setSending(false);
+      setTimeout(() => setStatus(null), 10000);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-3">
+          <RefreshCw className="w-7 h-7 text-tillmax-blue" />
+          Renewal Management
+        </h2>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 cursor-pointer bg-white border border-slate-200 px-4 py-2 rounded-xl hover:bg-slate-50 transition-all">
+            <input 
+              type="checkbox" 
+              className="w-4 h-4 rounded border-slate-300 text-tillmax-blue focus:ring-tillmax-blue"
+              checked={showAll}
+              onChange={(e) => setShowAll(e.target.checked)}
+            />
+            <span className="text-sm font-bold text-slate-700">Show All Records</span>
+          </label>
+          <button 
+            onClick={exportToExcel}
+            className="px-4 py-2 bg-white border border-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-50 transition-all flex items-center gap-2"
+          >
+            <Download className="w-4 h-4" />
+            Export to Excel
+          </button>
+        </div>
+      </div>
+
+      <div className="card p-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={handleSelectAll}
+              className="px-4 py-2 bg-slate-100 text-slate-700 font-bold rounded-lg hover:bg-slate-200 transition-all text-sm"
+            >
+              {selectedIds.length === records.length ? 'Deselect All' : 'Select All'}
+            </button>
+            <span className="text-sm font-medium text-slate-500">
+              {selectedIds.length} records selected
+            </span>
+          </div>
+
+          <div className="flex flex-col md:flex-row items-center gap-4">
+            <div className="flex items-center gap-2 w-full md:w-auto">
+              <label className="text-sm font-bold text-slate-700 whitespace-nowrap">Template:</label>
+              <select 
+                className="input-field py-2 text-sm"
+                value={selectedTemplateId}
+                onChange={e => setSelectedTemplateId(e.target.value)}
+              >
+                {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                {templates.length === 0 && <option value="">No templates found</option>}
+              </select>
+            </div>
+            <button 
+              disabled={selectedIds.length === 0 || sending || templates.length === 0}
+              onClick={sendBulkEmails}
+              className="btn-primary flex items-center gap-2 px-6 py-2 shadow-lg shadow-tillmax-blue/20 disabled:opacity-50 w-full md:w-auto"
+            >
+              {sending ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div> : <Send className="w-4 h-4" />}
+              Send Renewal Emails
+            </button>
+          </div>
+        </div>
+
+        {status && (
+          <div className={clsx(
+            "mb-6 p-4 rounded-xl border flex items-center gap-3 animate-in fade-in slide-in-from-top-2",
+            status.includes('ERROR') ? "bg-red-50 border-red-100 text-red-600" : "bg-blue-50 border-blue-100 text-tillmax-blue"
+          )}>
+            {status.includes('ERROR') ? <AlertCircle className="w-5 h-5" /> : <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-tillmax-blue"></div>}
+            <div className="flex-1">
+              <p className="font-bold text-sm">{status}</p>
+              {sending && (
+                <div className="mt-2 w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                  <div 
+                    className="bg-tillmax-blue h-full transition-all duration-500" 
+                    style={{ width: `${(progress.current / progress.total) * 100}%` }}
+                  ></div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-slate-100">
+                <th className="pb-4 text-left w-10"></th>
+                <th className="pb-4 text-left text-xs font-black text-slate-400 uppercase tracking-widest">Business Name</th>
+                <th className="pb-4 text-left text-xs font-black text-slate-400 uppercase tracking-widest">Support End Date</th>
+                <th className="pb-4 text-left text-xs font-black text-slate-400 uppercase tracking-widest">Status</th>
+                <th className="pb-4 text-left text-xs font-black text-slate-400 uppercase tracking-widest">Informed?</th>
+                <th className="pb-4 text-right text-xs font-black text-slate-400 uppercase tracking-widest">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {records.map(record => {
+                const supportEndDate = parseDate(record.supportEndDate);
+                const isExpired = supportEndDate < new Date();
+                const isExpiringSoon = !isExpired && supportEndDate < new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+                return (
+                  <tr key={record.id} className="group hover:bg-slate-50/50 transition-colors">
+                    <td className="py-4">
+                      <input 
+                        type="checkbox" 
+                        className="w-4 h-4 rounded border-slate-300 text-tillmax-blue focus:ring-tillmax-blue"
+                        checked={selectedIds.includes(record.id!)}
+                        onChange={() => toggleSelect(record.id!)}
+                      />
+                    </td>
+                    <td className="py-4">
+                      <div className="font-bold text-slate-900">{record.businessName}</div>
+                      <div className="text-xs text-slate-500">Inv: {record.invoiceNumber}</div>
+                    </td>
+                    <td className="py-4">
+                      <div className={clsx(
+                        "text-sm font-bold",
+                        isExpired ? "text-red-600" : isExpiringSoon ? "text-amber-600" : "text-slate-700"
+                      )}>
+                        {formatDate(record.supportEndDate, 'dd MMM yyyy')}
+                      </div>
+                    </td>
+                    <td className="py-4">
+                      <span className={clsx(
+                        "px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                        isExpired ? "bg-red-100 text-red-700" : isExpiringSoon ? "bg-amber-100 text-amber-700" : "bg-green-100 text-green-700"
+                      )}>
+                        {isExpired ? 'Expired' : isExpiringSoon ? 'Expiring Soon' : 'Active'}
+                      </span>
+                    </td>
+                    <td className="py-4">
+                      {record.renewalInformed ? (
+                        <div className="flex flex-col">
+                          <span className="text-xs font-bold text-green-600 flex items-center gap-1">
+                            <CheckCircle className="w-3 h-3" />
+                            Yes
+                          </span>
+                          <span className="text-[10px] text-slate-400">
+                            {record.renewalInformedDate} via {record.renewalInformedMethod}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-xs font-bold text-slate-400">No</span>
+                      )}
+                    </td>
+                    <td className="py-4 text-right">
+                      <Link 
+                        to={`/installation-records/${record.id}`}
+                        className="text-tillmax-blue hover:underline text-sm font-bold"
+                      >
+                        View Details
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              })}
+              {records.length === 0 && !loading && (
+                <tr>
+                  <td colSpan={6} className="py-20 text-center">
+                    <div className="flex flex-col items-center gap-4">
+                      <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center text-slate-400">
+                        <RefreshCw className="w-8 h-8" />
+                      </div>
+                      <div>
+                        <p className="text-slate-900 font-bold">No renewal records found</p>
+                        <p className="text-slate-500 text-sm">No records are expiring within the next 30 days or already expired.</p>
+                      </div>
+                      <div className="flex gap-3">
+                        <Link 
+                          to="/records" 
+                          className="px-4 py-2 bg-white border border-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-50 transition-all text-sm"
+                        >
+                          View All Records
+                        </Link>
+                        <button 
+                          onClick={() => onSwitchTab?.('maintenance')}
+                          className="px-4 py-2 bg-amber-50 text-amber-700 font-bold rounded-xl hover:bg-amber-100 transition-all text-sm"
+                        >
+                          Generate Test Data
+                        </button>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              )}
+              {loading && (
+                <tr>
+                  <td colSpan={6} className="py-20 text-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-tillmax-blue mx-auto"></div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const TemplateManager = () => {
+  const [templates, setTemplates] = useState<EmailTemplate[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editingTemplate, setEditingTemplate] = useState<Partial<EmailTemplate> | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const { profile } = useAuth();
+
+  useEffect(() => {
+    const q = query(collection(db, 'emailTemplates'), orderBy('name'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setTemplates(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as EmailTemplate)));
+      setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'emailTemplates');
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTemplate?.name || !editingTemplate?.subject || !editingTemplate?.body) return;
+
+    setIsSaving(true);
+    try {
+      const data = {
+        ...editingTemplate,
+        updatedAt: new Date().toISOString()
+      };
+
+      if (editingTemplate.id) {
+        await updateDoc(doc(db, 'emailTemplates', editingTemplate.id), data);
+      } else {
+        await addDoc(collection(db, 'emailTemplates'), {
+          ...data,
+          createdAt: new Date().toISOString()
+        });
+      }
 
       await addDoc(collection(db, 'logs'), {
         userId: profile?.uid,
         username: profile?.username,
-        action: `added new user: ${formData.username} (${formData.role})`,
+        action: `${editingTemplate.id ? 'updated' : 'created'} email template: ${editingTemplate.name}`,
         timestamp: new Date().toISOString(),
       });
 
-      setFormData({ email: '', username: '', role: 'EMPLOYEE', password: '' });
-      setShowAdd(false);
-      // Sign out from secondary app to keep it clean
-      await secondaryAuth.signOut();
-    } catch (err: any) {
-      console.error("Failed to create user", err);
-      setError(err.message || "Failed to create user");
-      if (err.code !== 'auth/email-already-in-use') {
-        handleFirestoreError(err, OperationType.WRITE, 'users');
-      }
+      setEditingTemplate(null);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'emailTemplates');
     } finally {
-      setIsCreating(false);
+      setIsSaving(false);
     }
   };
 
-  const handleDeleteUser = async (uid: string, username: string) => {
-    if (uid === profile?.uid) return alert("You cannot delete yourself.");
-    if (window.confirm(`Are you sure you want to delete user ${username}?`)) {
+  const handleDelete = async (id: string, name: string) => {
+    if (window.confirm(`Are you sure you want to delete template "${name}"?`)) {
       try {
-        await deleteDoc(doc(db, 'users', uid));
+        await deleteDoc(doc(db, 'emailTemplates', id));
         await addDoc(collection(db, 'logs'), {
           userId: profile?.uid,
           username: profile?.username,
-          action: `deleted user: ${username}`,
+          action: `deleted email template: ${name}`,
           timestamp: new Date().toISOString(),
         });
       } catch (error) {
-        handleFirestoreError(error, OperationType.DELETE, `users/${uid}`);
+        handleFirestoreError(error, OperationType.DELETE, `emailTemplates/${id}`);
       }
     }
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-end">
-        <button onClick={() => setShowAdd(true)} className="btn-primary flex items-center gap-2">
-          <UserPlus className="w-5 h-5" />
-          Add User
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-3">
+          <FileText className="w-7 h-7 text-tillmax-blue" />
+          Email Templates
+        </h2>
+        <button 
+          onClick={() => setEditingTemplate({ name: '', subject: '', body: '' })}
+          className="btn-primary flex items-center gap-2 px-6 py-2"
+        >
+          <Plus className="w-4 h-4" />
+          Create Template
         </button>
       </div>
 
-      {showAdd && (
-        <div className="card p-8 border-tillmax-blue bg-blue-50/30">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-bold text-slate-900">Add New User</h3>
-            <button onClick={() => setShowAdd(false)} className="text-slate-400 hover:text-slate-600"><X /></button>
-          </div>
-          <form onSubmit={handleAddUser} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-end">
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700">Email Address</label>
-              <input 
-                required
-                type="email" 
-                className="input-field" 
-                value={formData.email}
-                onChange={e => setFormData({...formData, email: e.target.value})}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700">Username</label>
-              <input 
-                required
-                type="text" 
-                className="input-field" 
-                value={formData.username}
-                onChange={e => setFormData({...formData, username: e.target.value})}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700">Password</label>
-              <input 
-                required
-                type="password" 
-                className="input-field" 
-                placeholder="Min 6 chars"
-                value={formData.password}
-                onChange={e => setFormData({...formData, password: e.target.value})}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700">Role</label>
-              <select 
-                className="input-field"
-                value={formData.role}
-                onChange={e => setFormData({...formData, role: e.target.value as UserRole})}
-              >
-                <option value="EMPLOYEE">Employee</option>
-                <option value="ADMIN">Admin</option>
-              </select>
-            </div>
-            {error && (
-              <div className="lg:col-span-4 bg-red-50 text-red-600 p-3 rounded-xl text-xs font-medium flex items-center gap-2">
-                <AlertCircle className="w-4 h-4" />
-                {error}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-1 space-y-4">
+          {templates.map(template => (
+            <div 
+              key={template.id} 
+              className={clsx(
+                "p-4 rounded-2xl border transition-all cursor-pointer group",
+                editingTemplate?.id === template.id ? "bg-tillmax-blue border-tillmax-blue text-white shadow-lg" : "bg-white border-slate-200 hover:border-tillmax-blue"
+              )}
+              onClick={() => setEditingTemplate(template)}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-bold truncate">{template.name}</span>
+                <button 
+                  onClick={(e) => { e.stopPropagation(); handleDelete(template.id!, template.name); }}
+                  className={clsx(
+                    "p-1 rounded-lg transition-colors",
+                    editingTemplate?.id === template.id ? "hover:bg-white/20 text-white" : "text-slate-300 hover:text-red-500"
+                  )}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               </div>
-            )}
-            <div className="lg:col-span-4 flex justify-end">
+              <p className={clsx(
+                "text-xs truncate",
+                editingTemplate?.id === template.id ? "text-white/70" : "text-slate-500"
+              )}>
+                Subject: {template.subject}
+              </p>
+            </div>
+          ))}
+          {templates.length === 0 && !loading && (
+            <div className="py-10 text-center text-slate-400 italic bg-white rounded-2xl border border-dashed border-slate-200">
+              No templates created yet.
+            </div>
+          )}
+        </div>
+
+        <div className="lg:col-span-2">
+          {editingTemplate ? (
+            <form onSubmit={handleSave} className="card p-8 space-y-6 animate-in fade-in slide-in-from-right-4">
+              <h3 className="text-xl font-bold text-slate-900">{editingTemplate.id ? 'Edit Template' : 'New Template'}</h3>
+              
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-slate-700">Template Name</label>
+                <input 
+                  required
+                  type="text" 
+                  className="input-field" 
+                  placeholder="e.g., Renewal Reminder"
+                  value={editingTemplate.name}
+                  onChange={e => setEditingTemplate({...editingTemplate, name: e.target.value})}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-slate-700">Email Subject</label>
+                <input 
+                  required
+                  type="text" 
+                  className="input-field" 
+                  placeholder="e.g., Your Tillmax Support is Expiring Soon"
+                  value={editingTemplate.subject}
+                  onChange={e => setEditingTemplate({...editingTemplate, subject: e.target.value})}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-bold text-slate-700">Email Body (HTML supported)</label>
+                  <div className="flex gap-2">
+                    {['{businessName}', '{supportEndDate}', '{invoiceNumber}'].map(tag => (
+                      <button 
+                        key={tag}
+                        type="button"
+                        onClick={() => setEditingTemplate({...editingTemplate, body: (editingTemplate.body || '') + tag})}
+                        className="text-[10px] bg-slate-100 text-slate-600 px-2 py-1 rounded hover:bg-slate-200 font-mono"
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <textarea 
+                  required
+                  rows={12}
+                  className="input-field font-mono text-sm" 
+                  placeholder="Dear {businessName}, your support expires on {supportEndDate}..."
+                  value={editingTemplate.body}
+                  onChange={e => setEditingTemplate({...editingTemplate, body: e.target.value})}
+                />
+                <p className="text-[10px] text-slate-400">
+                  Tip: Use the tags above to insert dynamic data into your emails.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-4 pt-4 border-t border-slate-100">
+                <button 
+                  type="button" 
+                  onClick={() => setEditingTemplate(null)}
+                  className="px-6 py-2 text-slate-500 font-bold hover:underline"
+                >
+                  Cancel
+                </button>
+                <button 
+                  disabled={isSaving}
+                  type="submit" 
+                  className="btn-primary px-10 py-2 flex items-center gap-2"
+                >
+                  {isSaving ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div> : <Save className="w-4 h-4" />}
+                  Save Template
+                </button>
+              </div>
+            </form>
+          ) : (
+            <div className="card p-20 text-center flex flex-col items-center justify-center border-2 border-dashed border-slate-200 bg-slate-50/50">
+              <FileText className="w-16 h-16 text-slate-200 mb-4" />
+              <h3 className="text-xl font-bold text-slate-400">Select a template to edit or create a new one</h3>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const SmtpSettings = () => {
+  const [settings, setSettings] = useState<Partial<SystemSetting>>({
+    gmailUser: '',
+    gmailAppPassword: '',
+    senderName: 'Tillmax Ltd Support'
+  });
+  const [loading, setLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const { profile } = useAuth();
+
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const docRef = doc(db, 'systemSettings', 'smtp');
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setSettings(docSnap.data() as SystemSetting);
+        }
+      } catch (error) {
+        handleFirestoreError(error, OperationType.GET, 'systemSettings/smtp');
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchSettings();
+  }, []);
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSaving(true);
+    try {
+      await setDoc(doc(db, 'systemSettings', 'smtp'), {
+        ...settings,
+        updatedAt: new Date().toISOString()
+      });
+
+      await addDoc(collection(db, 'logs'), {
+        userId: profile?.uid,
+        username: profile?.username,
+        action: `updated SMTP system settings`,
+        timestamp: new Date().toISOString(),
+      });
+
+      alert("SMTP Settings updated successfully!");
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'systemSettings/smtp');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  if (loading) return <div className="p-20 text-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-tillmax-blue mx-auto"></div></div>;
+
+  return (
+    <div className="max-w-2xl mx-auto">
+      <div className="card p-8">
+        <h2 className="text-2xl font-bold text-slate-900 mb-2 flex items-center gap-3">
+          <Settings className="w-7 h-7 text-tillmax-blue" />
+          SMTP Configuration
+        </h2>
+        <p className="text-slate-500 mb-8">Configure your Gmail SMTP settings for sending renewal notifications.</p>
+
+        <form onSubmit={handleSave} className="space-y-6">
+          <div className="space-y-2">
+            <label className="text-sm font-bold text-slate-700">Gmail Address</label>
+            <input 
+              required
+              type="email" 
+              className="input-field" 
+              placeholder="your-email@gmail.com"
+              value={settings.gmailUser}
+              onChange={e => setSettings({...settings, gmailUser: e.target.value})}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-bold text-slate-700">Google App Password</label>
+            <div className="relative">
+              <input 
+                required
+                type={showPassword ? "text" : "password"} 
+                className="input-field pr-12" 
+                placeholder="xxxx xxxx xxxx xxxx"
+                value={settings.gmailAppPassword}
+                onChange={e => setSettings({...settings, gmailAppPassword: e.target.value})}
+              />
               <button 
-                type="submit" 
-                disabled={isCreating}
-                className="btn-primary px-10 disabled:opacity-50"
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-tillmax-blue"
               >
-                {isCreating ? 'Creating...' : 'Create User'}
+                {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
               </button>
             </div>
-          </form>
+            <p className="text-[10px] text-slate-400 mt-1">
+              Note: Use a 16-character App Password generated from your Google Account security settings.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-bold text-slate-700">Sender Display Name</label>
+            <input 
+              required
+              type="text" 
+              className="input-field" 
+              placeholder="Tillmax Ltd Support"
+              value={settings.senderName}
+              onChange={e => setSettings({...settings, senderName: e.target.value})}
+            />
+          </div>
+
+          <div className="pt-6 border-t border-slate-100">
+            <button 
+              disabled={isSaving}
+              type="submit" 
+              className="btn-primary w-full py-3 flex items-center justify-center gap-2 shadow-xl shadow-tillmax-blue/20"
+            >
+              {isSaving ? <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> : <Save className="w-5 h-5" />}
+              Save SMTP Settings
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div className="mt-8 p-6 bg-blue-50 rounded-3xl border border-blue-100">
+        <h4 className="font-bold text-tillmax-blue mb-2 flex items-center gap-2">
+          <AlertCircle className="w-5 h-5" />
+          Setup Instructions
+        </h4>
+        <ol className="text-xs text-slate-600 space-y-2 list-decimal ml-4">
+          <li>Enable 2-Step Verification on your Google Account.</li>
+          <li>Go to Security {'>'} App Passwords.</li>
+          <li>Select 'Mail' and 'Other (Custom name)' as Tillmax.</li>
+          <li>Copy the 16-character code and paste it above.</li>
+        </ol>
+      </div>
+    </div>
+  );
+};
+
+const UserManagement = ({ users, loading }: { users: UserProfile[], loading: boolean }) => {
+  const { profile } = useAuth();
+  const { createUser, updateUser, deleteUser, isProcessing, error, clearError } = useUserManagement();
+  
+  const [showForm, setShowForm] = useState(false);
+  const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
+  const [userToDelete, setUserToDelete] = useState<{ uid: string; username: string } | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const handleEdit = (user: UserProfile) => {
+    setEditingUser(user);
+    setShowForm(true);
+    clearError();
+  };
+
+  const handleAdd = () => {
+    setEditingUser(null);
+    setShowForm(true);
+    clearError();
+  };
+
+  const handleCancel = () => {
+    setShowForm(false);
+    setEditingUser(null);
+    clearError();
+  };
+
+  const handleSave = async (data: any) => {
+    let success = false;
+    if (editingUser) {
+      success = await updateUser({
+        uid: editingUser.uid,
+        ...data
+      });
+    } else {
+      success = await createUser(data);
+    }
+
+    if (success) {
+      setShowForm(false);
+      setEditingUser(null);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!userToDelete) return;
+    const success = await deleteUser(userToDelete.uid, userToDelete.username);
+    if (success) {
+      setUserToDelete(null);
+    }
+  };
+
+  const filteredUsers = users.filter(user => 
+    user.email.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    user.username.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  return (
+    <div className="space-y-6">
+      {error && error.includes('FIREBASE_SERVICE_ACCOUNT') && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-6 mb-6">
+          <div className="flex items-start gap-4">
+            <div className="w-10 h-10 bg-red-100 text-red-600 rounded-full flex items-center justify-center flex-shrink-0">
+              <ShieldAlert className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-red-900 mb-2">Firebase Admin Setup Required</h3>
+              <p className="text-red-700 mb-4">
+                To create, edit, or delete users, you must configure the Firebase Admin SDK. The application needs a Service Account key to perform these administrative actions securely.
+              </p>
+              <div className="bg-white rounded-lg p-4 border border-red-100 space-y-3 text-sm text-slate-700">
+                <p className="font-semibold text-slate-900">Follow these steps to fix this issue:</p>
+                <ol className="list-decimal list-inside space-y-2">
+                  <li>Go to your <a href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Firebase Console</a>.</li>
+                  <li>Click the gear icon (⚙️) next to "Project Overview" and select <strong>Project settings</strong>.</li>
+                  <li>Go to the <strong>Service accounts</strong> tab.</li>
+                  <li>Click the <strong>Generate new private key</strong> button. This will download a JSON file.</li>
+                  <li>Open the downloaded JSON file in a text editor and copy its <strong>entire contents</strong>.</li>
+                  <li>In AI Studio, open the <strong>Settings</strong> menu (gear icon) and go to <strong>Secrets</strong>.</li>
+                  <li>Add a new secret with the name <code className="bg-slate-100 px-1.5 py-0.5 rounded text-red-600 font-mono">FIREBASE_SERVICE_ACCOUNT</code> and paste the JSON content as the value.</li>
+                  <li>Restart the development server.</li>
+                </ol>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
-      <div className="card overflow-hidden">
-        <table className="w-full text-left">
-          <thead className="bg-slate-50 border-b border-slate-100">
-            <tr>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">User</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Email</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Role</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Joined</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-50">
-            {users.map(user => (
-              <tr key={user.uid} className="hover:bg-slate-50/50 transition-colors">
-                <td className="px-6 py-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-tillmax-blue/10 rounded-full flex items-center justify-center text-tillmax-blue font-bold text-xs">
-                      {user.username?.[0]?.toUpperCase()}
-                    </div>
-                    <span className="font-bold text-slate-900">{user.username}</span>
-                  </div>
-                </td>
-                <td className="px-6 py-4 text-slate-600 text-sm">{user.email}</td>
-                <td className="px-6 py-4">
-                  <span className={clsx(
-                    "px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest",
-                    user.role === 'ADMIN' ? "bg-red-100 text-red-600" : "bg-blue-100 text-blue-600"
-                  )}>
-                    {user.role}
-                  </span>
-                </td>
-                <td className="px-6 py-4 text-slate-400 text-xs">
-                  {user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A'}
-                </td>
-                <td className="px-6 py-4 text-right">
-                  <button 
-                    onClick={() => handleDeleteUser(user.uid, user.username)}
-                    className="p-2 text-slate-300 hover:text-red-500 transition-colors"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div className="card p-4 flex-1 flex items-center gap-3 relative w-full md:w-96">
+          <Search className="w-5 h-5 text-slate-400" />
+          <input 
+            type="text" 
+            placeholder="Search users by email or username..." 
+            className="flex-1 outline-none text-slate-900"
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+          />
+        </div>
+        {!showForm && (
+          <div className="flex gap-2 w-full md:w-auto">
+            <button onClick={handleAdd} className="btn-primary flex items-center gap-2 flex-1 md:flex-initial">
+              <UserPlus className="w-5 h-5" />
+              Add User
+            </button>
+          </div>
+        )}
       </div>
+
+      {showForm && (
+        <div className="animate-in fade-in slide-in-from-top-4 duration-300">
+          <UserForm 
+            editingUser={editingUser || undefined}
+            onSave={handleSave}
+            onCancel={handleCancel}
+            isProcessing={isProcessing}
+            error={error || undefined}
+          />
+        </div>
+      )}
+
+      <UserList 
+        users={filteredUsers}
+        loading={loading}
+        onEdit={handleEdit}
+        onDelete={(uid, username) => setUserToDelete({ uid, username })}
+        currentUserId={profile?.uid}
+      />
+
+      {userToDelete && (
+        <ConfirmationModal 
+          isOpen={!!userToDelete}
+          onClose={() => setUserToDelete(null)}
+          onConfirm={confirmDelete}
+          title="Delete User"
+          message={`Are you sure you want to delete user "${userToDelete.username}"? This action cannot be undone and will permanently remove their access to the system.`}
+          confirmText="Delete User"
+          type="danger"
+          isProcessing={isProcessing}
+        />
+      )}
     </div>
   );
 };
@@ -292,8 +1056,162 @@ const MaintenancePanel = () => {
   const [recordProgress, setRecordProgress] = useState({ current: 0, total: 0 });
   const [status, setStatus] = useState<string | null>(null);
   const [recordStatus, setRecordStatus] = useState<string | null>(null);
+  const [migrationStatus, setMigrationStatus] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<string | null>(null);
+  const [backupStatus, setBackupStatus] = useState<string | null>(null);
+  const [isBackingUp, setIsBackingUp] = useState(false);
   const { profile } = useAuth();
+
+  const migrateInstructionRecords = async () => {
+    setConfirming(null);
+    setIsMigrating(true);
+    setMigrationStatus("Checking for old instruction records...");
+    try {
+      const oldSnap = await getDocs(collection(db, 'instructionRecords'));
+      if (oldSnap.empty) {
+        setMigrationStatus("No old instruction records found to migrate.");
+        setIsMigrating(false);
+        return;
+      }
+
+      const total = oldSnap.docs.length;
+      setMigrationStatus(`Found ${total} records. Migrating to installationRecords...`);
+      
+      const batch = writeBatch(db);
+      for (const docSnap of oldSnap.docs) {
+        const data = docSnap.data();
+        const newRef = doc(collection(db, 'installationRecords'));
+        batch.set(newRef, {
+          ...data,
+          businessName_lowercase: (data.businessName || '').toLowerCase(),
+          invoiceNumber_lowercase: (data.invoiceNumber || '').toLowerCase(),
+          postcode_lowercase: (data.postcode || '').toLowerCase(),
+          postcode_normalized: (data.postcode || '').toLowerCase().replace(/\s+/g, ''),
+          updatedAt: serverTimestamp()
+        });
+        // Delete old record
+        batch.delete(docSnap.ref);
+      }
+
+      await batch.commit();
+      
+      await addDoc(collection(db, 'logs'), {
+        userId: profile?.uid,
+        username: profile?.username,
+        action: `migrated ${total} records from instructionRecords to installationRecords`,
+        timestamp: new Date().toISOString(),
+      });
+
+      setMigrationStatus(`SUCCESS: Migrated ${total} records successfully!`);
+    } catch (error) {
+      console.error("Migration failed:", error);
+      setMigrationStatus(`ERROR: ${error instanceof Error ? error.message : "Migration failed"}`);
+    } finally {
+      setIsMigrating(false);
+    }
+  };
+
+  const exportRecordsToCSV = async () => {
+    setIsBackingUp(true);
+    setBackupStatus("Fetching records...");
+    try {
+      const q = query(collection(db, 'installationRecords'));
+      const snapshot = await getDocs(q);
+      
+      if (snapshot.empty) {
+        setBackupStatus("No records found to export.");
+        setIsBackingUp(false);
+        return;
+      }
+
+      setBackupStatus(`Processing ${snapshot.docs.length} records...`);
+      
+      const records = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as InstallationRecord));
+      
+      // Sort by business name
+      records.sort((a, b) => {
+        const nameA = (a.businessName || '').toLowerCase();
+        const nameB = (b.businessName || '').toLowerCase();
+        if (nameA < nameB) return -1;
+        if (nameA > nameB) return 1;
+        return 0;
+      });
+
+      // CSV Header
+      const headers = [
+        "Business Name",
+        "Invoice Number",
+        "Installation Date",
+        "Support Type",
+        "Support Status",
+        "Support Start Date",
+        "Support End Date",
+        "Software Type",
+        "Payment Amount",
+        "VAT Status",
+        "Payment Status",
+        "Payment Due Amount",
+        "Sales Person",
+        "Engineer",
+        "License Numbers",
+        "TeamViewer IDs",
+        "Comments",
+        "Created At"
+      ];
+
+      const csvRows = [headers.join(',')];
+
+      for (const r of records) {
+        const row = [
+          `"${(r.businessName || '').replace(/"/g, '""')}"`,
+          `"${(r.invoiceNumber || '').replace(/"/g, '""')}"`,
+          `"${r.installationDate || ''}"`,
+          `"${(r.supportType || '').replace(/"/g, '""')}"`,
+          `"${(r.supportStatus || '').replace(/"/g, '""')}"`,
+          `"${r.supportStartDate || ''}"`,
+          `"${r.supportEndDate || ''}"`,
+          `"${(r.softwareType || '').replace(/"/g, '""')}"`,
+          r.paymentAmount || 0,
+          `"${r.vatStatus || ''}"`,
+          `"${r.paymentStatus || ''}"`,
+          r.paymentDueAmount || 0,
+          `"${(r.salesPerson || '').replace(/"/g, '""')}"`,
+          `"${(r.engineer || '').replace(/"/g, '""')}"`,
+          `"${(r.licenseNumbers || []).join('; ').replace(/"/g, '""')}"`,
+          `"${(r.teamViewerIds || []).join('; ').replace(/"/g, '""')}"`,
+          `"${(r.comments || '').replace(/"/g, '""')}"`,
+          `"${r.createdAt || ''}"`
+        ];
+        csvRows.push(row.join(','));
+      }
+
+      const csvString = csvRows.join('\n');
+      const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `tillmax_backup_${new Date().toISOString().split('T')[0]}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      await addDoc(collection(db, 'logs'), {
+        userId: profile?.uid,
+        username: profile?.username,
+        action: `exported ${records.length} records to CSV`,
+        timestamp: new Date().toISOString(),
+      });
+
+      setBackupStatus(`SUCCESS: Exported ${records.length} records.`);
+      setTimeout(() => setBackupStatus(null), 5000);
+    } catch (error) {
+      console.error("CSV Export failed:", error);
+      setBackupStatus(`ERROR: ${error instanceof Error ? error.message : "Export failed"}`);
+    } finally {
+      setIsBackingUp(false);
+    }
+  };
 
   const generateTestData = async () => {
     setConfirming(null);
@@ -342,7 +1260,7 @@ const MaintenancePanel = () => {
         businessIds.push(bRef.id);
       }
 
-      setTestStatus("Generating 50 Instruction Records...");
+      setTestStatus("Generating 50 Installation Records...");
       for (let i = 1; i <= 50; i++) {
         const bIndex = Math.floor(Math.random() * businesses.length);
         const bId = businessIds[bIndex];
@@ -375,7 +1293,7 @@ const MaintenancePanel = () => {
           paymentStatus = "Payment due";
         }
 
-        const rRef = doc(collection(db, 'instructionRecords'));
+        const rRef = doc(collection(db, 'installationRecords'));
         const recordData = {
           businessId: bId,
           businessName: bName,
@@ -457,7 +1375,8 @@ const MaintenancePanel = () => {
           const data = docSnap.data() as Business;
           batch.update(docSnap.ref, {
             name_lowercase: data.name?.toLowerCase() || '',
-            postcode_lowercase: data.postcode?.toLowerCase() || ''
+            postcode_lowercase: data.postcode?.toLowerCase() || '',
+            postcode_normalized: data.postcode?.toLowerCase().replace(/\s+/g, '') || ''
           });
         });
 
@@ -489,7 +1408,7 @@ const MaintenancePanel = () => {
     }
   };
 
-  const fixInstructionRecordsIndex = async () => {
+  const fixInstallationRecordsIndex = async () => {
     setConfirming(null);
     setIsMigrating(true);
     setRecordStatus("Starting migration...");
@@ -501,14 +1420,14 @@ const MaintenancePanel = () => {
 
       // Get actual total count
       setRecordStatus("Calculating total records...");
-      const countSnapshot = await getCountFromServer(collection(db, 'instructionRecords'));
+      const countSnapshot = await getCountFromServer(collection(db, 'installationRecords'));
       const totalCount = countSnapshot.data().count;
       setRecordProgress({ current: 0, total: totalCount });
 
-      const businessCache = new Map<string, string>();
+      const businessCache = new Map<string, { name: string, postcode: string }>();
 
       while (hasMore) {
-        let q = query(collection(db, 'instructionRecords'), limit(BATCH_LIMIT));
+        let q = query(collection(db, 'installationRecords'), limit(BATCH_LIMIT));
         if (lastVisible) {
           q = query(q, startAfter(lastVisible));
         }
@@ -523,28 +1442,35 @@ const MaintenancePanel = () => {
         
         // Process this batch
         for (const docSnap of snapshot.docs) {
-          const data = docSnap.data() as InstructionRecord;
+          const data = docSnap.data() as InstallationRecord;
           
-          // Fetch business name if missing or just to be sure
+          // Fetch business info if missing or just to be sure
           let bName = data.businessName || 'Unknown Business';
+          let bPostcode = data.postcode || '';
+
           if (data.businessId) {
             if (businessCache.has(data.businessId)) {
-              bName = businessCache.get(data.businessId)!;
-            } else if (!data.businessName) {
+              const info = businessCache.get(data.businessId)!;
+              bName = info.name;
+              bPostcode = info.postcode;
+            } else {
               const bDoc = await getDoc(doc(db, 'businesses', data.businessId));
               if (bDoc.exists()) {
-                bName = bDoc.data().name;
-                businessCache.set(data.businessId, bName);
+                const bData = bDoc.data();
+                bName = bData.name;
+                bPostcode = bData.postcode || '';
+                businessCache.set(data.businessId, { name: bName, postcode: bPostcode });
               }
-            } else {
-              businessCache.set(data.businessId, data.businessName);
             }
           }
           
           batch.update(docSnap.ref, {
             businessName: bName,
             businessName_lowercase: bName.toLowerCase(),
-            invoiceNumber_lowercase: data.invoiceNumber?.toLowerCase() || ''
+            invoiceNumber_lowercase: data.invoiceNumber?.toLowerCase() || '',
+            postcode: bPostcode,
+            postcode_lowercase: bPostcode.toLowerCase(),
+            postcode_normalized: bPostcode.toLowerCase().replace(/\s+/g, '')
           });
         }
 
@@ -563,7 +1489,7 @@ const MaintenancePanel = () => {
       await addDoc(collection(db, 'logs'), {
         userId: profile?.uid,
         username: profile?.username,
-        action: `fixed search index for ${totalProcessed} instruction records`,
+        action: `fixed search index for ${totalProcessed} installation records`,
         timestamp: new Date().toISOString(),
       });
 
@@ -637,12 +1563,12 @@ const MaintenancePanel = () => {
           )}
         </div>
 
-        {/* Instruction Records Search Index Fix */}
+        {/* Installation Records Search Index Fix */}
         <div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div className="space-y-1">
-              <h4 className="font-bold text-slate-900">Fix Instruction Records Search Index</h4>
-              <p className="text-sm text-slate-500">Updates all instruction records with business names and lowercase fields for better searchability.</p>
+              <h4 className="font-bold text-slate-900">Fix Installation Records Search Index</h4>
+              <p className="text-sm text-slate-500">Updates all installation records with business names and lowercase fields for better searchability.</p>
             </div>
             {!confirming && !isMigrating && (
               <button 
@@ -656,7 +1582,7 @@ const MaintenancePanel = () => {
             {confirming === 'records' && (
               <div className="flex items-center gap-3">
                 <button onClick={() => setConfirming(null)} className="px-4 py-2 text-slate-500 font-bold hover:text-slate-700">Cancel</button>
-                <button onClick={fixInstructionRecordsIndex} className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 shadow-lg shadow-emerald-600/20">Confirm Fix</button>
+                <button onClick={fixInstallationRecordsIndex} className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 shadow-lg shadow-emerald-600/20">Confirm Fix</button>
               </div>
             )}
             {isMigrating && recordStatus && !recordStatus.includes('successfully') && (
@@ -690,12 +1616,92 @@ const MaintenancePanel = () => {
           )}
         </div>
 
+        {/* Legacy Data Migration */}
+        <div className="p-6 bg-red-50 rounded-2xl border border-red-100">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="space-y-1">
+              <h4 className="font-bold text-red-900">Migrate Legacy Records</h4>
+              <p className="text-sm text-red-700">Checks for records in the old "instructionRecords" collection and moves them to the new "installationRecords" collection.</p>
+            </div>
+            {!confirming && !isMigrating && (
+              <button 
+                onClick={() => setConfirming('legacy-migration' as any)}
+                className="px-8 py-3 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 transition-colors shadow-lg shadow-red-600/20 flex items-center gap-2"
+              >
+                <History className="w-5 h-5" />
+                Migrate Legacy Data
+              </button>
+            )}
+            {confirming === ('legacy-migration' as any) && (
+              <div className="flex items-center gap-3">
+                <button onClick={() => setConfirming(null)} className="px-4 py-2 text-slate-500 font-bold hover:text-slate-700">Cancel</button>
+                <button onClick={migrateInstructionRecords} className="px-6 py-2 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 shadow-lg shadow-red-600/20">Confirm Migration</button>
+              </div>
+            )}
+            {isMigrating && migrationStatus && !migrationStatus.includes('successfully') && (
+              <div className="flex items-center gap-2 text-red-600 font-bold">
+                <RefreshCw className="w-5 h-5 animate-spin" />
+                Migrating...
+              </div>
+            )}
+          </div>
+          
+          {migrationStatus && (
+            <div className={clsx(
+              "mt-4 flex items-center gap-2 text-sm font-bold",
+              migrationStatus.includes('ERROR') ? "text-red-600" : 
+              migrationStatus.includes('SUCCESS') ? "text-emerald-600" : "text-red-600"
+            )}>
+              {migrationStatus.includes('ERROR') ? <AlertCircle className="w-5 h-5" /> : 
+               migrationStatus.includes('SUCCESS') ? <CheckCircle className="w-5 h-5" /> : 
+               <RefreshCw className="w-5 h-5 animate-spin" />}
+              {migrationStatus}
+            </div>
+          )}
+        </div>
+
+        {/* Data Backup Section */}
+        <div className="p-6 bg-tillmax-blue/5 rounded-2xl border border-tillmax-blue/10">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="space-y-1">
+              <h4 className="font-bold text-slate-900">Data Backup (CSV)</h4>
+              <p className="text-sm text-slate-500">Download all installation records as a CSV file, sorted by business name.</p>
+            </div>
+            
+            <button 
+              onClick={exportRecordsToCSV}
+              disabled={isBackingUp}
+              className="btn-primary flex items-center gap-2 px-8 whitespace-nowrap disabled:opacity-50"
+            >
+              {isBackingUp ? (
+                <RefreshCw className="w-5 h-5 animate-spin" />
+              ) : (
+                <Download className="w-5 h-5" />
+              )}
+              Backup to CSV
+            </button>
+          </div>
+          
+          {backupStatus && (
+            <div className={clsx(
+              "mt-4 flex items-center gap-2 text-sm font-bold",
+              backupStatus.includes('ERROR') ? "text-red-600" : 
+              backupStatus.includes('SUCCESS') ? "text-emerald-600" : "text-tillmax-blue"
+            )}>
+              {backupStatus.includes('ERROR') ? <AlertCircle className="w-5 h-5" /> : 
+               backupStatus.includes('SUCCESS') ? <CheckCircle className="w-5 h-5" /> : 
+               <RefreshCw className="w-5 h-5 animate-spin" />}
+              {backupStatus}
+            </div>
+          )}
+        </div>
+
         {/* Test Data Generation */}
         <div className="p-6 bg-amber-50 rounded-2xl border border-amber-100">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div className="space-y-1">
               <h4 className="font-bold text-amber-900">Generate Test Data</h4>
-              <p className="text-sm text-amber-700">Creates 15 UK businesses and 50 instruction records with mixed statuses for testing performance.</p>
+              <p className="text-sm text-amber-700">Creates 15 UK businesses and 50 installation records with mixed statuses for testing performance.</p>
             </div>
             
             {!confirming && !isMigrating && (

@@ -3,11 +3,12 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { collection, addDoc, updateDoc, doc, getDoc, serverTimestamp, getDocs, query, orderBy, deleteDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../AuthProvider';
-import { InstructionRecord, Equipment, SimpleEntity } from '../types';
+import { InstallationRecord, Equipment, SimpleEntity } from '../types';
 import { ArrowLeft, Save, Plus, Trash2, Tag, Monitor, Wrench, Code, User, DollarSign, Calendar, FileText, Phone, CreditCard, Users, AlertCircle, Package, ChevronUp, ChevronDown, Mail } from 'lucide-react';
-import { format, addYears } from 'date-fns';
+import { addYears } from 'date-fns';
+import { formatDate, parseDate } from '../lib/utils';
 
-export const InstructionRecordForm = () => {
+export const InstallationRecordForm = () => {
   const { id } = useParams();
   const [searchParams] = useSearchParams();
   const businessId = searchParams.get('businessId');
@@ -23,15 +24,16 @@ export const InstructionRecordForm = () => {
   const [softwareTypes, setSoftwareTypes] = useState<SimpleEntity[]>([]);
   const [equipmentTypes, setEquipmentTypes] = useState<SimpleEntity[]>([]);
 
-  const [formData, setFormData] = useState<Partial<InstructionRecord>>({
+  const [formData, setFormData] = useState<Partial<InstallationRecord>>({
     businessId: businessId || '',
     supportType: 'Online and telephone support',
     supportStatus: 'Active',
-    supportStartDate: format(new Date(), 'yyyy-MM-dd'),
-    supportEndDate: format(addYears(new Date(), 1), 'yyyy-MM-dd'),
-    installationDate: format(new Date(), 'yyyy-MM-dd'),
+    supportStartDate: formatDate(new Date(), 'yyyy-MM-dd'),
+    supportEndDate: formatDate(addYears(new Date(), 1), 'yyyy-MM-dd'),
+    installationDate: formatDate(new Date(), 'yyyy-MM-dd'),
     equipment: [],
     paymentAmount: 0,
+    vatStatus: 'No VAT',
     paymentStatus: 'Payment due',
     paymentDueAmount: 0,
     salesPerson: '',
@@ -47,6 +49,7 @@ export const InstructionRecordForm = () => {
   });
 
   const [businessName, setBusinessName] = useState<string>('');
+  const [businessPostcode, setBusinessPostcode] = useState<string>('');
   const [newEquipment, setNewEquipment] = useState({ name: '', quantity: 1 });
   const [customName, setCustomName] = useState('');
 
@@ -73,14 +76,15 @@ export const InstructionRecordForm = () => {
 
         // Fetch record if editing
         if (id && id !== 'new') {
-          const docRef = doc(db, 'instructionRecords', id);
+          const docRef = doc(db, 'installationRecords', id);
           const docSnap = await getDoc(docRef);
           if (docSnap.exists()) {
-            const data = docSnap.data() as InstructionRecord;
+            const data = docSnap.data() as InstallationRecord;
             setFormData(prev => ({
               ...prev,
               ...data,
               equipment: data.equipment || [],
+              vatStatus: data.vatStatus || 'No VAT',
               licenseNumbers: data.licenseNumbers || [],
               teamViewerIds: data.teamViewerIds || [],
               invoiceNumber: data.invoiceNumber || '',
@@ -94,7 +98,9 @@ export const InstructionRecordForm = () => {
             if (data.businessId) {
               const bDoc = await getDoc(doc(db, 'businesses', data.businessId));
               if (bDoc.exists()) {
-                setBusinessName(bDoc.data().name);
+                const bData = bDoc.data() as any;
+                setBusinessName(bData.name);
+                setBusinessPostcode(bData.postcode || '');
               }
             }
           }
@@ -102,7 +108,9 @@ export const InstructionRecordForm = () => {
           // Fetch business name for new record if businessId is in URL
           const bDoc = await getDoc(doc(db, 'businesses', businessId));
           if (bDoc.exists()) {
-            setBusinessName(bDoc.data().name);
+            const bData = bDoc.data() as any;
+            setBusinessName(bData.name);
+            setBusinessPostcode(bData.postcode || '');
           }
         }
       } catch (error) {
@@ -118,39 +126,43 @@ export const InstructionRecordForm = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isReadOnly) return;
     setLoading(true);
     try {
       const data = {
         ...formData,
         businessName: businessName,
         businessName_lowercase: businessName.toLowerCase(),
+        postcode: businessPostcode,
+        postcode_lowercase: businessPostcode.toLowerCase(),
+        postcode_normalized: businessPostcode.toLowerCase().replace(/\s+/g, ''),
         invoiceNumber_lowercase: formData.invoiceNumber?.toLowerCase() || '',
         updatedAt: serverTimestamp(),
       };
 
       if (id && id !== 'new') {
-        await updateDoc(doc(db, 'instructionRecords', id), data);
+        await updateDoc(doc(db, 'installationRecords', id), data);
         await addDoc(collection(db, 'logs'), {
           userId: profile?.uid,
           username: profile?.username,
-          action: `updated instruction record for business: ${businessName}`,
+          action: `updated installation record for business: ${businessName}`,
           timestamp: new Date().toISOString(),
         });
       } else {
-        await addDoc(collection(db, 'instructionRecords'), {
+        await addDoc(collection(db, 'installationRecords'), {
           ...data,
           createdAt: serverTimestamp(),
         });
         await addDoc(collection(db, 'logs'), {
           userId: profile?.uid,
           username: profile?.username,
-          action: `created instruction record for business: ${businessName}`,
+          action: `created installation record for business: ${businessName}`,
           timestamp: new Date().toISOString(),
         });
       }
       navigate(-1);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'instructionRecords');
+      handleFirestoreError(error, OperationType.WRITE, 'installationRecords');
     } finally {
       setLoading(false);
     }
@@ -206,16 +218,16 @@ export const InstructionRecordForm = () => {
     if (!isAdmin || id === 'new') return;
     setLoading(true);
     try {
-      await deleteDoc(doc(db, 'instructionRecords', id!));
+      await deleteDoc(doc(db, 'installationRecords', id!));
       await addDoc(collection(db, 'logs'), {
         userId: profile?.uid,
         username: profile?.username,
-        action: `deleted instruction record for business ID: ${formData.businessId}`,
+        action: `deleted installation record for business ID: ${formData.businessId}`,
         timestamp: new Date().toISOString(),
       });
       navigate(-1);
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `instructionRecords/${id}`);
+      handleFirestoreError(error, OperationType.DELETE, `installationRecords/${id}`);
     } finally {
       setLoading(false);
       setShowDeleteConfirm(false);
@@ -262,7 +274,7 @@ export const InstructionRecordForm = () => {
         <div className="card p-8">
           <h2 className="text-2xl font-bold text-slate-900 mb-2 flex items-center gap-3">
             <FileText className="w-7 h-7 text-tillmax-blue" />
-            {id === 'new' ? 'New Instruction Record' : 'Edit Instruction Record'}
+            {id === 'new' ? 'New Installation Record' : isReadOnly ? 'View Installation Record' : 'Edit Installation Record'}
           </h2>
           {businessName && (
             <p className="text-slate-500 font-medium mb-8 flex items-center gap-2">
@@ -489,6 +501,18 @@ export const InstructionRecordForm = () => {
                   />
                 </div>
                 <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700">VAT Status</label>
+                  <select 
+                    disabled={isReadOnly}
+                    className="input-field disabled:bg-slate-50 disabled:text-slate-500"
+                    value={formData.vatStatus}
+                    onChange={e => setFormData({...formData, vatStatus: e.target.value as any})}
+                  >
+                    <option value="No VAT">No VAT</option>
+                    <option value="Inc VAT">Inc VAT</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
                   <label className="text-sm font-bold text-slate-700">Payment Status</label>
                   <select 
                     disabled={isReadOnly}
@@ -665,7 +689,8 @@ export const InstructionRecordForm = () => {
               </h3>
               <textarea 
                 rows={4}
-                className="input-field" 
+                disabled={isReadOnly}
+                className="input-field disabled:bg-slate-50 disabled:text-slate-500" 
                 value={formData.comments}
                 onChange={e => setFormData({...formData, comments: e.target.value})}
                 placeholder="Add any additional notes or details here..."
@@ -687,7 +712,7 @@ export const InstructionRecordForm = () => {
                         type="checkbox" 
                         className="peer sr-only"
                         checked={formData.renewalInformed}
-                        onChange={e => setFormData({...formData, renewalInformed: e.target.checked, renewalInformedDate: e.target.checked ? format(new Date(), 'yyyy-MM-dd') : ''})}
+                        onChange={e => setFormData({...formData, renewalInformed: e.target.checked, renewalInformedDate: e.target.checked ? formatDate(new Date(), 'yyyy-MM-dd') : ''})}
                       />
                       <div className="w-12 h-6 bg-slate-200 rounded-full peer peer-checked:bg-tillmax-blue transition-colors"></div>
                       <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-6"></div>
@@ -747,14 +772,16 @@ export const InstructionRecordForm = () => {
           >
             Cancel
           </button>
-          <button 
-            disabled={loading}
-            type="submit" 
-            className="btn-primary flex items-center gap-2 px-12 py-3 shadow-xl shadow-tillmax-blue/20"
-          >
-            {loading ? <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> : <Save className="w-5 h-5" />}
-            {id === 'new' ? 'Create Record' : 'Update Record'}
-          </button>
+          {!isReadOnly && (
+            <button 
+              disabled={loading}
+              type="submit" 
+              className="btn-primary flex items-center gap-2 px-12 py-3 shadow-xl shadow-tillmax-blue/20"
+            >
+              {loading ? <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> : <Save className="w-5 h-5" />}
+              {id === 'new' ? 'Create Record' : 'Update Record'}
+            </button>
+          )}
         </div>
       </form>
 
@@ -767,7 +794,7 @@ export const InstructionRecordForm = () => {
             </div>
             <h3 className="text-2xl font-bold text-slate-900 mb-2">Delete Record?</h3>
             <p className="text-slate-600 mb-8">
-              Are you sure you want to delete this instruction record? This action cannot be undone.
+              Are you sure you want to delete this installation record? This action cannot be undone.
             </p>
             <div className="flex gap-4">
               <button 

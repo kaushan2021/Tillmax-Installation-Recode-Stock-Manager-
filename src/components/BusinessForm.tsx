@@ -54,6 +54,7 @@ export const BusinessForm = () => {
         ...formData,
         name_lowercase: formData.name?.toLowerCase(),
         postcode_lowercase: formData.postcode?.toLowerCase(),
+        postcode_normalized: formData.postcode?.toLowerCase().replace(/\s+/g, ''),
         updatedAt: serverTimestamp(),
       };
 

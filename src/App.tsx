@@ -21,6 +21,7 @@ import {
   User as UserIcon,
   Package,
   Wrench,
+  Database,
   Code,
   Tag,
   Monitor,
@@ -36,9 +37,11 @@ import {
   MoreVertical,
   Download,
   Filter,
-  RefreshCw
+  RefreshCw,
+  MessageSquare
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { CommentModal } from './components/CommentModal';
 import { 
   collection, 
   query, 
@@ -62,22 +65,16 @@ import {
 import { signOut } from 'firebase/auth';
 import { db, auth, handleFirestoreError, OperationType } from './firebase';
 import { AuthProvider, useAuth } from './AuthProvider';
-import { Business, InstructionRecord, UserProfile, LogEntry, SimpleEntity, UserRole } from './types';
-import { format, addYears, isAfter, parseISO, addMonths } from 'date-fns';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
+import { Business, InstallationRecord, UserProfile, LogEntry, SimpleEntity, UserRole } from './types';
+import { addYears, isAfter, addMonths } from 'date-fns';
+import { cn, formatDate, parseDate, formatDateTime } from './lib/utils';
 
 // Import components
 import { BusinessForm } from './components/BusinessForm';
 import { BusinessDetail } from './components/BusinessDetail';
-import { InstructionRecordForm } from './components/InstructionRecordForm';
+import { InstallationRecordForm } from './components/InstallationRecordForm';
 import { AdminPanel } from './components/AdminPanel';
 import { ErrorBoundary } from './components/ErrorBoundary';
-
-// --- Utility ---
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
 
 // --- Components ---
 
@@ -97,10 +94,11 @@ const Logo = ({ className }: { className?: string }) => (
       <rect x="42" y="84" width="22" height="22" rx="4" fill="#2E3192" />
       <rect x="74" y="84" width="22" height="22" rx="4" fill="#2E3192" />
 
-      {/* TILLMAX Text */}
+      {/* TILLMAX LTD Text */}
       <text x="110" y="75" fontFamily="Arial, sans-serif" fontSize="68" fontWeight="900" letterSpacing="-2">
         <tspan fill="#2E3192">TILL</tspan>
         <tspan fill="#E31E24">MAX</tspan>
+        <tspan fill="#2E3192" fontSize="32" dx="8" dy="-20">LTD</tspan>
       </text>
 
       {/* Subtitle with lines */}
@@ -111,7 +109,7 @@ const Logo = ({ className }: { className?: string }) => (
       <line x1="345" y1="95" x2="380" y2="95" stroke="#E31E24" strokeWidth="1" />
       
       {/* Registered Trademark Symbol */}
-      <text x="385" y="25" fontFamily="Arial, sans-serif" fontSize="14" fill="#E31E24">®</text>
+      <text x="410" y="25" fontFamily="Arial, sans-serif" fontSize="14" fill="#E31E24">®</text>
     </svg>
   </div>
 );
@@ -214,9 +212,12 @@ const Login = () => {
     }
   };
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-50">
-    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-tillmax-blue"></div>
-  </div>;
+  if (loading) return (
+    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50">
+      <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-tillmax-blue mb-6"></div>
+      <p className="text-slate-500 font-medium animate-pulse">Authenticating...</p>
+    </div>
+  );
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
@@ -246,7 +247,7 @@ const Login = () => {
                 type="email" 
                 required
                 className="input-field w-full" 
-                placeholder="pasi@tillmax.co.uk"
+                placeholder="Email"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
               />
@@ -257,7 +258,7 @@ const Login = () => {
                 type="password" 
                 required
                 className="input-field w-full" 
-                placeholder="••••••••"
+                placeholder="Password"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
               />
@@ -324,7 +325,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
 
   const navItems = [
     { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-    { to: '/records', icon: FileText, label: 'Instruction Records' },
+    { to: '/records', icon: FileText, label: 'Installation Records' },
     { to: '/businesses', icon: Package, label: 'Businesses' },
   ];
 
@@ -422,14 +423,12 @@ const Dashboard = () => {
     if (!profile) return;
     let unsubscribe: () => void = () => {};
 
-    if (profile?.role === 'ADMIN') {
-      const q = query(collection(db, 'logs'), orderBy('timestamp', 'desc'), limit(10));
-      unsubscribe = onSnapshot(q, (snapshot) => {
-        setLogs(snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as LogEntry)));
-      }, (error) => {
-        handleFirestoreError(error, OperationType.GET, 'logs');
-      });
-    }
+    const q = query(collection(db, 'logs'), orderBy('timestamp', 'desc'), limit(10));
+    unsubscribe = onSnapshot(q, (snapshot) => {
+      setLogs(snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as LogEntry)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'logs');
+    });
 
     // Fetch stats (optimized for performance)
     const fetchStats = async () => {
@@ -442,23 +441,23 @@ const Dashboard = () => {
         // Use getCountFromServer for total counts (very fast)
         const [businessesCount, recordsCount] = await Promise.all([
           getCountFromServer(collection(db, 'businesses')),
-          getCountFromServer(collection(db, 'instructionRecords'))
+          getCountFromServer(collection(db, 'installationRecords'))
         ]);
 
         // Targeted queries for support status counts
         const [activeCount, expiringCount, expiredCount] = await Promise.all([
-          getCountFromServer(query(collection(db, 'instructionRecords'), where('supportEndDate', '>', nowIso))),
-          getCountFromServer(query(collection(db, 'instructionRecords'), where('supportEndDate', '>', nowIso), where('supportEndDate', '<=', nextMonthIso))),
-          getCountFromServer(query(collection(db, 'instructionRecords'), where('supportEndDate', '<=', nowIso)))
+          getCountFromServer(query(collection(db, 'installationRecords'), where('supportEndDate', '>', nowIso))),
+          getCountFromServer(query(collection(db, 'installationRecords'), where('supportEndDate', '>', nowIso), where('supportEndDate', '<=', nextMonthIso))),
+          getCountFromServer(query(collection(db, 'installationRecords'), where('supportEndDate', '<=', nowIso)))
         ]);
 
         // For payment due, we still need to fetch to sum the amounts
         // But we only fetch the records that ARE due, not all 100k
-        const dueQuery = query(collection(db, 'instructionRecords'), where('paymentStatus', '==', 'Payment due'));
+        const dueQuery = query(collection(db, 'installationRecords'), where('paymentStatus', '==', 'Payment due'));
         const dueSnap = await getDocs(dueQuery);
         let dueAmount = 0;
         dueSnap.forEach(d => {
-          dueAmount += (d.data() as InstructionRecord).paymentDueAmount || 0;
+          dueAmount += (d.data() as InstallationRecord).paymentDueAmount || 0;
         });
 
         setStats({
@@ -581,7 +580,7 @@ const Dashboard = () => {
                         <p className="text-sm font-medium text-slate-900">
                           <span className="font-bold">{log.username}</span> {log.action}
                         </p>
-                        <p className="text-xs text-slate-400">{log.timestamp ? format(new Date(log.timestamp), 'MMM d, h:mm a') : 'Just now'}</p>
+                        <p className="text-xs text-slate-400">{log.timestamp ? formatDateTime(log.timestamp) : 'Just now'}</p>
                       </div>
                     </div>
                   </div>
@@ -640,18 +639,18 @@ const Businesses = () => {
           limit(PAGE_SIZE)
         );
       } else if (postcodeSearch) {
-        const s = postcodeSearch.toLowerCase();
+        const s = postcodeSearch.toLowerCase().replace(/\s+/g, '');
         q = query(
           collection(db, 'businesses'),
-          where('postcode_lowercase', '>=', s),
-          where('postcode_lowercase', '<=', s + '\uf8ff'),
-          orderBy('postcode_lowercase'),
+          where('postcode_normalized', '>=', s),
+          where('postcode_normalized', '<=', s + '\uf8ff'),
+          orderBy('postcode_normalized'),
           limit(PAGE_SIZE)
         );
       } else {
         q = query(
           collection(db, 'businesses'),
-          orderBy('name'),
+          orderBy('createdAt', 'desc'),
           limit(PAGE_SIZE)
         );
       }
@@ -707,11 +706,13 @@ const Businesses = () => {
 
   const filtered = businesses.filter(b => {
     if (!search && !postcodeSearch) return true;
-    const s = search.toLowerCase();
-    const p = postcodeSearch.toLowerCase();
+    const s = search.toLowerCase().replace(/\s+/g, '');
+    const p = postcodeSearch.toLowerCase().replace(/\s+/g, '');
+    const bName = (b.name || '').toLowerCase().replace(/\s+/g, '');
+    const bPostcode = (b.postcode || '').toLowerCase().replace(/\s+/g, '');
     return (
-      (search && (b.name_lowercase?.includes(s) || b.name?.toLowerCase().includes(s))) ||
-      (postcodeSearch && (b.postcode_lowercase?.includes(p) || b.postcode?.toLowerCase().includes(p)))
+      (search && bName.includes(s)) ||
+      (postcodeSearch && bPostcode.includes(p))
     );
   });
 
@@ -768,55 +769,70 @@ const Businesses = () => {
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-tillmax-blue"></div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filtered.map(business => (
-            <motion.div 
-              layout
-              key={business.id} 
-              className="card hover:border-tillmax-blue transition-all cursor-pointer group"
-              onClick={() => navigate(`/businesses/${business.id}`)}
-            >
-              <div className="p-6">
-                <div className="flex justify-between items-start mb-4">
-                  <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center text-slate-600 group-hover:bg-tillmax-blue group-hover:text-white transition-colors">
-                    <Package className="w-6 h-6" />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {isAdmin && (
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setBusinessToDelete({ id: business.id!, name: business.name });
-                        }}
-                        className="p-2 text-slate-300 hover:text-red-500 transition-colors"
-                        title="Delete Business"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
-                    )}
-                    <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-tillmax-blue group-hover:translate-x-1 transition-all" />
-                  </div>
-                </div>
-                <h3 className="text-xl font-bold text-slate-900 mb-1">{business.name}</h3>
-                <div className="flex items-center gap-2 text-slate-500 text-sm mb-4">
-                  <MapPin className="w-4 h-4" />
-                  {business.postcode}
-                </div>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-xs text-slate-500">
-                    <UserIcon className="w-3 h-3" />
-                    {business.ownerName}
-                  </div>
-                  <div className="flex items-center gap-2 text-xs text-slate-500">
-                    <Phone className="w-3 h-3" />
-                    {business.telephone}
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          ))}
+        <div className="card overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100">
+                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Business Name</th>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Postcode</th>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Owner</th>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Telephone</th>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Created</th>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {filtered.map(business => (
+                  <tr 
+                    key={business.id} 
+                    className="hover:bg-slate-50/50 transition-colors group cursor-pointer"
+                    onClick={() => navigate(`/businesses/${business.id}`)}
+                  >
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center text-slate-600 group-hover:bg-tillmax-blue group-hover:text-white transition-colors">
+                          <Package className="w-4 h-4" />
+                        </div>
+                        <span className="font-bold text-slate-900">{business.name}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-slate-600">
+                      {business.postcode}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-slate-600">
+                      {business.ownerName}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-slate-600">
+                      {business.telephone}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-slate-500">
+                      {formatDate(business.createdAt)}
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        {isAdmin && (
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setBusinessToDelete({ id: business.id!, name: business.name });
+                            }}
+                            className="p-2 text-slate-300 hover:text-red-500 transition-colors"
+                            title="Delete Business"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                        <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-tillmax-blue group-hover:translate-x-1 transition-all" />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           {filtered.length === 0 && (
-            <div className="col-span-full py-20 text-center card bg-slate-50 border-dashed">
+            <div className="py-20 text-center bg-slate-50 border-dashed border-t border-slate-100">
               <Package className="w-12 h-12 text-slate-300 mx-auto mb-4" />
               <p className="text-slate-500 font-medium">No businesses found matching your search.</p>
             </div>
@@ -853,7 +869,7 @@ const Businesses = () => {
               </div>
               <h3 className="text-2xl font-bold text-slate-900 mb-2">Delete Business?</h3>
               <p className="text-slate-600 mb-8">
-                Are you sure you want to delete <span className="font-bold text-slate-900">{businessToDelete.name}</span>? This will NOT delete its instruction records, but the business profile will be removed.
+                Are you sure you want to delete <span className="font-bold text-slate-900">{businessToDelete.name}</span>? This will NOT delete its installation records, but the business profile will be removed.
               </p>
               <div className="flex gap-4">
                 <button 
@@ -877,11 +893,12 @@ const Businesses = () => {
   );
 };
 
-// --- Instruction Records List ---
+// --- Installation Records List ---
 
-const InstructionRecords = () => {
-  const [records, setRecords] = useState<(InstructionRecord & { businessName?: string })[]>([]);
+const InstallationRecords = () => {
+  const [records, setRecords] = useState<(InstallationRecord & { businessName?: string })[]>([]);
   const [search, setSearch] = useState('');
+  const [postcodeSearch, setPostcodeSearch] = useState('');
   const [invoiceSearch, setInvoiceSearch] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
   const statusFilter = searchParams.get('status');
@@ -902,7 +919,7 @@ const InstructionRecords = () => {
     else setLoading(true);
 
     try {
-      let q = query(collection(db, 'instructionRecords'));
+      let q = query(collection(db, 'installationRecords'));
 
       // Server-side filtering
       if (statusFilter) {
@@ -929,6 +946,30 @@ const InstructionRecords = () => {
           where('businessName_lowercase', '<=', s + '\uf8ff'),
           orderBy('businessName_lowercase')
         );
+      } else if (postcodeSearch) {
+        const s = postcodeSearch.toLowerCase().replace(/\s+/g, '');
+        
+        // 1. Find businesses with this postcode first (more reliable for old records)
+        const bQuery = query(
+          collection(db, 'businesses'),
+          where('postcode_normalized', '>=', s),
+          where('postcode_normalized', '<=', s + '\uf8ff'),
+          limit(30)
+        );
+        const bSnap = await getDocs(bQuery);
+        const bIds = bSnap.docs.map(d => d.id);
+        
+        if (bIds.length > 0) {
+          // 2. Find records for these businesses (limit to 10 for 'in' query)
+          q = query(q, where('businessId', 'in', bIds.slice(0, 10)));
+        } else {
+          // 3. Fallback to direct search on records (for new records that have denormalized postcode)
+          q = query(
+            q, 
+            where('postcode_normalized', '>=', s), 
+            where('postcode_normalized', '<=', s + '\uf8ff')
+          );
+        }
       } else if (invoiceSearch) {
         const s = invoiceSearch.toLowerCase();
         q = query(
@@ -949,25 +990,36 @@ const InstructionRecords = () => {
       }
 
       const snapshot = await getDocs(q);
-      const recordsData = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as InstructionRecord));
+      const recordsData = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as InstallationRecord));
       
-      // Fetch business names for these records only if not already present
-      const businessIds = [...new Set(recordsData.filter(r => !r.businessName).map(r => r.businessId))];
-      const businessMap = new Map<string, string>();
+      console.log(`Fetched ${recordsData.length} records`);
+
+      // Fetch business names and postcodes for these records only if not already present
+      const businessIds = [...new Set(recordsData.filter(r => !r.businessName || !r.postcode).map(r => r.businessId))];
+      const businessMap = new Map<string, { name: string, postcode: string }>();
       
       if (businessIds.length > 0) {
         await Promise.all(businessIds.map(async (bid) => {
-          const bDoc = await getDoc(doc(db, 'businesses', bid));
-          if (bDoc.exists()) {
-            businessMap.set(bid, (bDoc.data() as Business).name);
+          try {
+            const bDoc = await getDoc(doc(db, 'businesses', bid));
+            if (bDoc.exists()) {
+              const bData = bDoc.data() as any;
+              businessMap.set(bid, { name: bData.name, postcode: bData.postcode || '' });
+            }
+          } catch (err) {
+            console.warn(`Failed to fetch business ${bid}:`, err);
           }
         }));
       }
 
-      const enrichedRecords = recordsData.map(r => ({
-        ...r,
-        businessName: r.businessName || businessMap.get(r.businessId) || 'Unknown Business'
-      }));
+      const enrichedRecords = recordsData.map(r => {
+        const bInfo = businessMap.get(r.businessId);
+        return {
+          ...r,
+          businessName: r.businessName || bInfo?.name || 'Unknown Business',
+          postcode: r.postcode || bInfo?.postcode || ''
+        };
+      });
 
       if (isNext) {
         setRecords(prev => [...prev, ...enrichedRecords]);
@@ -978,8 +1030,8 @@ const InstructionRecords = () => {
       setLastDoc(snapshot.docs[snapshot.docs.length - 1]);
       setHasMore(snapshot.docs.length === PAGE_SIZE);
     } catch (err) {
-      console.error("Records fetch error:", err);
-      setError("Failed to load records.");
+      handleFirestoreError(err, OperationType.GET, 'installationRecords');
+      setError("Failed to load records. Please check your connection or permissions.");
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -992,34 +1044,42 @@ const InstructionRecords = () => {
     }, 800);
 
     return () => clearTimeout(delayDebounceFn);
-  }, [search, invoiceSearch, statusFilter, quickFilter, profile]);
+  }, [search, postcodeSearch, invoiceSearch, statusFilter, quickFilter, profile]);
 
   const [recordToDelete, setRecordToDelete] = useState<{ id: string, invoice: string } | null>(null);
+  const [commentRecord, setCommentRecord] = useState<InstallationRecord | null>(null);
 
   const handleDeleteRecord = async () => {
     if (!isAdmin || !recordToDelete) return;
     try {
-      await deleteDoc(doc(db, 'instructionRecords', recordToDelete.id));
+      await deleteDoc(doc(db, 'installationRecords', recordToDelete.id));
       await addDoc(collection(db, 'logs'), {
         userId: profile?.uid,
         username: profile?.username,
-        action: `deleted instruction record: ${recordToDelete.invoice}`,
+        action: `deleted installation record: ${recordToDelete.invoice}`,
         timestamp: new Date().toISOString(),
       });
       setRecordToDelete(null);
       fetchRecords(); // Refresh current view
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `instructionRecords/${recordToDelete.id}`);
+      handleFirestoreError(error, OperationType.DELETE, `installationRecords/${recordToDelete.id}`);
     }
   };
 
   const filtered = records.filter(r => {
-    if (!search && !invoiceSearch) return true;
-    const s = search.toLowerCase();
-    const i = invoiceSearch.toLowerCase();
+    if (!search && !postcodeSearch && !invoiceSearch) return true;
+    const s = search.toLowerCase().replace(/\s+/g, '');
+    const p = postcodeSearch.toLowerCase().replace(/\s+/g, '');
+    const i = invoiceSearch.toLowerCase().replace(/\s+/g, '');
+    
+    const recordName = (r.businessName || '').toLowerCase().replace(/\s+/g, '');
+    const recordPostcode = (r.postcode || '').toLowerCase().replace(/\s+/g, '');
+    const recordInvoice = (r.invoiceNumber || '').toLowerCase().replace(/\s+/g, '');
+
     return (
-      (search && (r.businessName?.toLowerCase().includes(s) || r.businessName_lowercase?.includes(s))) ||
-      (invoiceSearch && (r.invoiceNumber?.toLowerCase().includes(i) || r.invoiceNumber_lowercase?.includes(i)))
+      (search && recordName.includes(s)) ||
+      (postcodeSearch && recordPostcode.includes(p)) ||
+      (invoiceSearch && recordInvoice.includes(i))
     );
   });
 
@@ -1046,7 +1106,7 @@ const InstructionRecords = () => {
   return (
     <div>
       <PageHeader 
-        title="Instruction Records" 
+        title="Installation Records" 
         subtitle="View and manage all installation records."
       />
 
@@ -1060,10 +1120,28 @@ const InstructionRecords = () => {
             value={search}
             onChange={(e) => {
               setSearch(e.target.value);
+              setPostcodeSearch('');
               setInvoiceSearch('');
             }}
           />
           {loading && search && (
+            <RefreshCw className="w-4 h-4 text-tillmax-blue animate-spin absolute right-4" />
+          )}
+        </div>
+        <div className="card p-4 flex-1 flex items-center gap-3 relative">
+          <MapPin className="w-5 h-5 text-slate-400" />
+          <input 
+            type="text" 
+            placeholder="Search by postcode..." 
+            className="flex-1 outline-none text-slate-900"
+            value={postcodeSearch}
+            onChange={(e) => {
+              setPostcodeSearch(e.target.value);
+              setSearch('');
+              setInvoiceSearch('');
+            }}
+          />
+          {loading && postcodeSearch && (
             <RefreshCw className="w-4 h-4 text-tillmax-blue animate-spin absolute right-4" />
           )}
         </div>
@@ -1077,6 +1155,7 @@ const InstructionRecords = () => {
             onChange={(e) => {
               setInvoiceSearch(e.target.value);
               setSearch('');
+              setPostcodeSearch('');
             }}
           />
           {loading && invoiceSearch && (
@@ -1140,7 +1219,7 @@ const InstructionRecords = () => {
               <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Invoice</th>
               <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Install Date</th>
               <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Support Status</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Renewal</th>
+              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Comments</th>
               <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Payment</th>
               <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider text-right">Action</th>
             </tr>
@@ -1152,7 +1231,7 @@ const InstructionRecords = () => {
               </tr>
             ) : (
               filtered.map(record => {
-                const isSupportActive = record.supportEndDate && isAfter(parseISO(record.supportEndDate), new Date());
+                const isSupportActive = record.supportEndDate && isAfter(parseDate(record.supportEndDate), new Date());
                 return (
                   <tr key={record.id} className="hover:bg-slate-50/50 transition-colors">
                     <td className="px-6 py-4">
@@ -1168,7 +1247,7 @@ const InstructionRecords = () => {
                     <td className="px-6 py-4 text-slate-600 text-sm">
                       {(() => {
                         try {
-                          return record.installationDate ? format(parseISO(record.installationDate), 'MMM d, yyyy') : 'N/A';
+                          return formatDate(record.installationDate);
                         } catch (e) {
                           return 'Invalid Date';
                         }
@@ -1183,22 +1262,28 @@ const InstructionRecords = () => {
                       </span>
                     </td>
                     <td className="px-6 py-4">
-                      {record.renewalInformed ? (
-                        <div className="flex flex-col">
-                          <span className="text-[10px] font-black text-tillmax-blue uppercase tracking-widest">Informed</span>
-                          <span className="text-[10px] text-slate-400">{record.renewalInformedMethod}</span>
-                        </div>
-                      ) : (
-                        <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Pending</span>
-                      )}
+                      <button 
+                        onClick={() => setCommentRecord(record)}
+                        className="flex items-center gap-1.5 text-tillmax-blue hover:text-tillmax-blue/80 font-bold text-xs uppercase tracking-widest transition-colors"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5" />
+                        {record.comments ? 'View Comments' : 'Add Comment'}
+                      </button>
                     </td>
                     <td className="px-6 py-4">
-                      <span className={cn(
-                        "text-sm font-bold",
-                        record.paymentStatus === 'Payment cleared' ? "text-emerald-600" : "text-tillmax-red"
-                      )}>
-                        {record.paymentStatus}
-                      </span>
+                      <div className="flex flex-col">
+                        <span className={cn(
+                          "text-sm font-bold",
+                          record.paymentStatus === 'Payment cleared' ? "text-emerald-600" : "text-tillmax-red"
+                        )}>
+                          {record.paymentStatus}
+                        </span>
+                        {record.vatStatus && (
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                            {record.vatStatus}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2">
@@ -1234,6 +1319,15 @@ const InstructionRecords = () => {
           </div>
         )}
       </div>
+
+      <CommentModal 
+        isOpen={!!commentRecord}
+        onClose={() => setCommentRecord(null)}
+        record={commentRecord}
+        onUpdate={() => {
+          fetchRecords();
+        }}
+      />
 
       {/* Delete Confirmation Modal */}
       <AnimatePresence>
@@ -1292,8 +1386,9 @@ function AppRoutes() {
   const { user, profile, loading } = useAuth();
 
   if (loading) return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-tillmax-blue"></div>
+    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50">
+      <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-tillmax-blue mb-6"></div>
+      <p className="text-slate-500 font-medium animate-pulse">Authenticating...</p>
     </div>
   );
 
@@ -1309,9 +1404,9 @@ function AppRoutes() {
         <Route path="/businesses/:id" element={<BusinessDetail />} />
         <Route path="/businesses/:id/edit" element={<BusinessForm />} />
         <Route path="/businesses/new" element={<BusinessForm />} />
-        <Route path="/records" element={<InstructionRecords />} />
-        <Route path="/records/:id/edit" element={<InstructionRecordForm />} />
-        <Route path="/records/new" element={<InstructionRecordForm />} />
+        <Route path="/records" element={<InstallationRecords />} />
+        <Route path="/records/:id/edit" element={<InstallationRecordForm />} />
+        <Route path="/records/new" element={<InstallationRecordForm />} />
         <Route path="/admin" element={<AdminPanel />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>

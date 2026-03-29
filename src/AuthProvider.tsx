@@ -31,6 +31,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      setLoading(true);
       setUser(firebaseUser);
       if (firebaseUser) {
         try {
@@ -39,6 +40,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setProfile(userDoc.data() as UserProfile);
           } else if (firebaseUser.email === 'pasi@tillmax.co.uk') {
             // Auto-create profile for default admin if they managed to sign in
+            console.log("Auto-creating profile for default admin:", firebaseUser.email);
             const newProfile: UserProfile = {
               uid: firebaseUser.uid,
               email: firebaseUser.email!,
@@ -46,15 +48,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               role: 'ADMIN',
               createdAt: new Date().toISOString(),
             };
-            await setDoc(doc(db, 'users', firebaseUser.uid), newProfile);
-            setProfile(newProfile);
+            try {
+              await setDoc(doc(db, 'users', firebaseUser.uid), newProfile);
+              console.log("Profile created successfully");
+              setProfile(newProfile);
+            } catch (err) {
+              console.error("Failed to auto-create profile:", err);
+              // If setDoc fails, it might be due to rules, but we should still try to set the profile locally if we know they are the admin
+              // However, it's better to let the error bubble up or handle it in the UI
+              setProfile(null);
+            }
           } else {
             console.warn("User profile not found for UID:", firebaseUser.uid);
             setProfile(null);
           }
-        } catch (error) {
+        } catch (error: any) {
           console.error("Failed to fetch user profile:", error);
-          setProfile(null);
+          
+          // Fallback for default admin even if getDoc fails (e.g. permission error before profile exists)
+          if (firebaseUser.email === 'pasi@tillmax.co.uk') {
+            console.log("Attempting fallback profile creation for admin after fetch failure");
+            const newProfile: UserProfile = {
+              uid: firebaseUser.uid,
+              email: firebaseUser.email!,
+              username: 'System Admin',
+              role: 'ADMIN',
+              createdAt: new Date().toISOString(),
+            };
+            try {
+              await setDoc(doc(db, 'users', firebaseUser.uid), newProfile);
+              setProfile(newProfile);
+            } catch (setErr) {
+              console.error("Fallback profile creation failed:", setErr);
+              setProfile(null);
+            }
+          } else {
+            setProfile(null);
+          }
         }
       } else {
         setProfile(null);
@@ -66,12 +96,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const login = async (email: string, pass: string) => {
+    setLoading(true);
     try {
       await signInWithEmailAndPassword(auth, email, pass);
     } catch (error: any) {
-      // If it's the first admin and they don't exist, we might want to create them
-      // but usually we should have a bootstrap script.
-      // For now, let's just throw the error.
+      setLoading(false);
       throw error;
     }
   };

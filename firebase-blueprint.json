@@ -12,12 +12,14 @@
         "email": { "type": "string", "format": "email", "description": "Email address" },
         "address": { "type": "string", "description": "Business Address" },
         "postcode": { "type": "string", "description": "Postcode" },
+        "postcode_lowercase": { "type": "string", "description": "Postcode lowercase" },
+        "postcode_normalized": { "type": "string", "description": "Postcode lowercase no spaces" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["name", "postcode"]
     },
-    "InstructionRecord": {
-      "title": "Instruction Record",
+    "InstallationRecord": {
+      "title": "Installation Record",
       "description": "A record of an installation or support instruction",
       "type": "object",
       "properties": {
@@ -39,6 +41,7 @@
           "description": "Equipment purchased" 
         },
         "paymentAmount": { "type": "number", "description": "Payment amount" },
+        "vatStatus": { "type": "string", "enum": ["Inc VAT", "No VAT"], "description": "VAT Status" },
         "paymentStatus": { "type": "string", "enum": ["Payment cleared", "Payment due"], "description": "Payment status" },
         "paymentDueAmount": { "type": "number", "description": "Payment due amount" },
         "salesPerson": { "type": "string", "description": "Sales person name" },
@@ -47,6 +50,9 @@
         "licenseNumbers": { "type": "array", "items": { "type": "string" }, "description": "License numbers" },
         "teamViewerIds": { "type": "array", "items": { "type": "string" }, "description": "TeamViewer IDs" },
         "invoiceNumber": { "type": "string", "description": "Invoice Number" },
+        "postcode": { "type": "string", "description": "Business Postcode (denormalized)" },
+        "postcode_lowercase": { "type": "string", "description": "Business Postcode lowercase (for search)" },
+        "postcode_normalized": { "type": "string", "description": "Business Postcode lowercase no spaces (for search)" },
         "comments": { "type": "string", "description": "Comments" },
         "renewalInformed": { "type": "boolean", "description": "Whether customer was informed about renewal" },
         "renewalInformedMethod": { "type": "string", "enum": ["Email", "Text", "Other"], "description": "Communication method for renewal" },
@@ -97,16 +103,39 @@
       "title": "Software Type",
       "type": "object",
       "properties": { "name": { "type": "string" } }
+    },
+    "EmailTemplate": {
+      "title": "Email Template",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "subject": { "type": "string" },
+        "body": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "subject", "body"]
+    },
+    "SystemSetting": {
+      "title": "System Setting",
+      "type": "object",
+      "properties": {
+        "smtpUser": { "type": "string" },
+        "smtpPass": { "type": "string" },
+        "smtpSenderName": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
     }
   },
   "firestore": {
     "/businesses": { "schema": "Business", "description": "Collection of businesses" },
-    "/instructionRecords": { "schema": "InstructionRecord", "description": "Collection of instruction records" },
+    "/installationRecords": { "schema": "InstallationRecord", "description": "Collection of installation records" },
     "/users": { "schema": "User", "description": "Collection of users" },
     "/logs": { "schema": "Log", "description": "Collection of activity logs" },
     "/equipmentTypes": { "schema": "EquipmentType", "description": "Collection of equipment types" },
     "/salesPeople": { "schema": "SalesPerson", "description": "Collection of sales people" },
     "/engineers": { "schema": "Engineer", "description": "Collection of engineers" },
-    "/softwareTypes": { "schema": "SoftwareType", "description": "Collection of software types" }
+    "/softwareTypes": { "schema": "SoftwareType", "description": "Collection of software types" },
+    "/emailTemplates": { "schema": "EmailTemplate", "description": "Collection of email templates" },
+    "/systemSettings": { "schema": "SystemSetting", "description": "Collection for system settings" }
   }
 }

@@ -24,7 +24,7 @@
 //   - createdAt: string
 //   - updatedAt: timestamp
 //
-// Collection: instructionRecords
+// Collection: installationRecords (Installation Records)
 // Fields:
 //   - businessId: string (required)
 //   - invoiceNumber: string
@@ -71,17 +71,17 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && (
+        request.auth.token.email == "pasi@tillmax.co.uk" ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN') ||
-        request.auth.token.email == "pasi@tillmax.co.uk"
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN')
       );
     }
 
     function isEmployee() {
       return isAuthenticated() && (
+        isAdmin() ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'EMPLOYEE') || 
-        isAdmin()
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'EMPLOYEE')
       );
     }
 
@@ -90,25 +90,49 @@ service cloud.firestore {
     // ===============================================================
 
     match /users/{userId} {
-      allow read: if isAuthenticated();
-      allow create, update, delete: if isAdmin();
+      // Users can only read their own profile, Admins can read all
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      // Admins can create any profile; users can create their own (needed for initial setup)
+      allow create: if isAuthenticated() && (isAdmin() || request.auth.uid == userId);
+      allow update, delete: if isAdmin();
     }
 
     match /businesses/{businessId} {
       allow read: if isAuthenticated();
-      allow create, update: if isEmployee();
+      allow create, update: if isEmployee() && 
+        request.resource.data.name is string && request.resource.data.name.size() < 200 &&
+        request.resource.data.postcode is string && request.resource.data.postcode.size() < 20;
+      allow delete: if isAdmin();
+    }
+
+    match /installationRecords/{recordId} {
+      allow read: if isAuthenticated();
+      allow create: if isEmployee() &&
+        request.resource.data.businessId is string &&
+        (!('invoiceNumber' in request.resource.data) || request.resource.data.invoiceNumber.size() < 100);
+      allow update: if isEmployee() &&
+        request.resource.data.businessId == resource.data.businessId &&
+        (!('invoiceNumber' in request.resource.data) || request.resource.data.invoiceNumber.size() < 100) &&
+        (!('comments' in request.resource.data) || request.resource.data.comments is string && request.resource.data.comments.size() < 5000);
       allow delete: if isAdmin();
     }
 
     match /instructionRecords/{recordId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isEmployee();
-      allow delete: if isAdmin();
+      allow read, delete: if isAdmin();
+    }
+
+    match /emailTemplates/{templateId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /systemSettings/{settingId} {
+      allow read, write: if isAdmin();
     }
 
     match /logs/{logId} {
-      allow read: if isAdmin();
-      allow create: if isAuthenticated();
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && 
+        request.resource.data.action is string && request.resource.data.action.size() < 500;
     }
 
     match /equipmentTypes/{id} {

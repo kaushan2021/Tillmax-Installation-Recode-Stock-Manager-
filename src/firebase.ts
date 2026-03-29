@@ -1,8 +1,8 @@
-import { initializeApp, getApp, getApps } from 'firebase/app';
+import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
   signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
+  createUserWithEmailAndPassword,
   sendPasswordResetEmail,
   signOut, 
   onAuthStateChanged, 
@@ -14,13 +14,21 @@ import firebaseConfig from '../firebase-applet-config.json';
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
-// Secondary app for admin to create users without signing out
-export const secondaryApp = getApps().length > 1 
-  ? getApp('secondary') 
-  : initializeApp(firebaseConfig, 'secondary');
-export const secondaryAuth = getAuth(secondaryApp);
-
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+// Test connection to Firestore
+async function testConnection() {
+  try {
+    await getDocFromServer(doc(db, 'test', 'connection'));
+    console.log("Firestore connection successful");
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.error("Firestore connection failed: the client is offline. Please check your Firebase configuration.");
+    }
+    // Skip logging for other errors, as this is simply a connection test.
+  }
+}
+testConnection();
 
 export { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, signOut, onAuthStateChanged };
 export type { FirebaseUser };
@@ -73,8 +81,9 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     path
   }
   
-  const isPermissionError = error instanceof Error && 
-    (error.message.includes('permission-denied') || error.message.includes('Missing or insufficient permissions'));
+  const isPermissionError = (error instanceof Error && 
+    (error.message.includes('permission-denied') || error.message.includes('Missing or insufficient permissions'))) ||
+    (error as any)?.code === 'permission-denied';
 
   if (isPermissionError) {
     console.error('Firestore Permission Error: ', JSON.stringify(errInfo));

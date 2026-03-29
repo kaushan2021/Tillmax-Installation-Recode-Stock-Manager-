@@ -3,7 +3,7 @@ import { useNavigate, useParams, Link } from 'react-router-dom';
 import { collection, query, where, orderBy, onSnapshot, doc, getDoc, deleteDoc, addDoc, getDocs, limit, startAfter } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../AuthProvider';
-import { Business, InstructionRecord } from '../types';
+import { Business, InstallationRecord } from '../types';
 import { 
   ArrowLeft, 
   Edit2, 
@@ -23,26 +23,24 @@ import {
   Tag,
   Monitor,
   DollarSign,
-  History as HistoryIcon
+  History as HistoryIcon,
+  MessageSquare
 } from 'lucide-react';
-import { format, isAfter, parseISO } from 'date-fns';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
+import { isAfter } from 'date-fns';
+import { CommentModal } from './CommentModal';
+import { cn, formatDate, parseDate } from '../lib/utils';
 
 export const BusinessDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const { profile, isAdmin } = useAuth();
   const [business, setBusiness] = useState<Business | null>(null);
-  const [records, setRecords] = useState<InstructionRecord[]>([]);
+  const [records, setRecords] = useState<InstallationRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [lastDoc, setLastDoc] = useState<any>(null);
   const [hasMore, setHasMore] = useState(true);
+  const [commentRecord, setCommentRecord] = useState<InstallationRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const PAGE_SIZE = 10;
@@ -54,7 +52,7 @@ export const BusinessDetail = () => {
 
     try {
       let q = query(
-        collection(db, 'instructionRecords'), 
+        collection(db, 'installationRecords'), 
         where('businessId', '==', id),
         orderBy('installationDate', 'desc'),
         limit(PAGE_SIZE)
@@ -65,7 +63,7 @@ export const BusinessDetail = () => {
       }
 
       const snapshot = await getDocs(q);
-      const recordsData = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as InstructionRecord));
+      const recordsData = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as InstallationRecord));
       
       if (isNext) {
         setRecords(prev => [...prev, ...recordsData]);
@@ -76,8 +74,8 @@ export const BusinessDetail = () => {
       setLastDoc(snapshot.docs[snapshot.docs.length - 1]);
       setHasMore(snapshot.docs.length === PAGE_SIZE);
     } catch (err) {
-      handleFirestoreError(err, OperationType.GET, 'instructionRecords');
-      setError("Failed to load instruction records.");
+      handleFirestoreError(err, OperationType.GET, 'installationRecords');
+      setError("Failed to load installation records.");
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -130,16 +128,17 @@ export const BusinessDetail = () => {
   const handleDeleteRecord = async () => {
     if (!isAdmin || !recordToDelete) return;
     try {
-      await deleteDoc(doc(db, 'instructionRecords', recordToDelete.id));
+      await deleteDoc(doc(db, 'installationRecords', recordToDelete.id));
       await addDoc(collection(db, 'logs'), {
         userId: profile?.uid,
         username: profile?.username,
-        action: `deleted instruction record: ${recordToDelete.invoice}`,
+        action: `deleted installation record: ${recordToDelete.invoice}`,
         timestamp: new Date().toISOString(),
       });
       setRecordToDelete(null);
+      fetchRecords();
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `instructionRecords/${recordToDelete.id}`);
+      handleFirestoreError(error, OperationType.DELETE, `installationRecords/${recordToDelete.id}`);
     }
   };
 
@@ -248,201 +247,112 @@ export const BusinessDetail = () => {
           {records.length === 0 && !loading ? (
             <div className="card p-20 text-center bg-slate-50 border-dashed">
               <FileText className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-              <p className="text-slate-500 font-medium">No instruction records found for this business.</p>
+              <p className="text-slate-500 font-medium">No installation records found for this business.</p>
               <Link to={`/records/new?businessId=${id}`} className="text-tillmax-blue font-bold mt-2 inline-block hover:underline">
                 Create the first record
               </Link>
             </div>
           ) : (
-            <>
-              <div className="space-y-6">
-              {records.map(record => {
-                const isSupportActive = record.supportEndDate && isAfter(parseISO(record.supportEndDate), new Date());
-                
-                return (
-                  <div key={record.id} className="card group">
-                    <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                      <div className="flex items-center gap-4">
-                        <div className={cn(
-                          "px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider flex items-center gap-1.5",
-                          isSupportActive ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"
-                        )}>
-                          {isSupportActive ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Clock className="w-3.5 h-3.5" />}
-                          Support {isSupportActive ? 'Active' : 'Expired'}
-                        </div>
-                        <span className="text-slate-400 font-mono text-sm">Inv: {record.invoiceNumber}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {isAdmin && (
-                          <button 
-                            onClick={() => setRecordToDelete({ id: record.id!, invoice: record.invoiceNumber })}
-                            className="p-2 text-slate-400 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
-                        <Link to={`/records/${record.id}/edit`} className="p-2 text-slate-400 hover:text-tillmax-blue transition-colors opacity-0 group-hover:opacity-100">
-                          <Edit2 className="w-4 h-4" />
-                        </Link>
-                      </div>
-                    </div>
-                    
-                    <div className="p-6">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                        <div className="space-y-4">
-                          <div className="flex items-center gap-3">
-                            <Calendar className="w-5 h-5 text-slate-400" />
-                            <div>
-                              <p className="text-xs font-bold text-slate-400 uppercase">Installation Date</p>
-                              <p className="font-medium text-slate-900">
-                                {(() => {
-                                  try {
-                                    return record.installationDate ? format(parseISO(record.installationDate), 'MMMM d, yyyy') : 'N/A';
-                                  } catch (e) {
-                                    return 'Invalid Date';
-                                  }
-                                })()}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <Phone className="w-5 h-5 text-slate-400" />
-                            <div>
-                              <p className="text-xs font-bold text-slate-400 uppercase">Support Period</p>
-                              <p className="font-medium text-slate-900">
-                                {(() => {
-                                  try {
-                                    const start = record.supportStartDate ? format(parseISO(record.supportStartDate), 'MMM yyyy') : 'N/A';
-                                    const end = record.supportEndDate ? format(parseISO(record.supportEndDate), 'MMM yyyy') : 'N/A';
-                                    return `${start} - ${end}`;
-                                  } catch (e) {
-                                    return 'Invalid Period';
-                                  }
-                                })()}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <Monitor className="w-5 h-5 text-slate-400" />
-                            <div>
-                              <p className="text-xs font-bold text-slate-400 uppercase">Software</p>
-                              <p className="font-medium text-slate-900">{record.softwareType}</p>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="space-y-4">
-                          <div className="flex items-center gap-3">
-                            <DollarSign className="w-5 h-5 text-slate-400" />
-                            <div>
-                              <p className="text-xs font-bold text-slate-400 uppercase">Payment Status</p>
-                              <div className="flex items-center gap-2">
-                                <span className={cn(
-                                  "font-bold",
-                                  record.paymentStatus === 'Payment cleared' ? "text-emerald-600" : "text-tillmax-red"
-                                )}>
-                                  {record.paymentStatus}
-                                </span>
-                                {record.paymentStatus === 'Payment due' && (
-                                  <span className="text-slate-500 text-sm font-bold">(£{record.paymentDueAmount})</span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <User className="w-5 h-5 text-slate-400" />
-                            <div>
-                              <p className="text-xs font-bold text-slate-400 uppercase">Staff</p>
-                              <p className="font-medium text-slate-900">
-                                Sales: {record.salesPerson} | Eng: {record.engineer}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {record.equipment && record.equipment.length > 0 && (
-                        <div className="mt-6 pt-6 border-t border-slate-100">
-                          <p className="text-xs font-bold text-slate-400 uppercase mb-3">Equipment</p>
-                          <div className="flex flex-wrap gap-2">
-                            {record.equipment.map((eq, i) => (
-                              <span key={i} className="bg-slate-100 text-slate-700 px-3 py-1 rounded-lg text-sm font-medium">
-                                {eq.quantity}x {eq.name}
+            <div className="card overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-100">
+                      <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Invoice</th>
+                      <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Install Date</th>
+                      <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Support</th>
+                      <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Comments</th>
+                      <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Payment</th>
+                      <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {records.map(record => {
+                      const isSupportActive = record.supportEndDate && isAfter(parseDate(record.supportEndDate), new Date());
+                      return (
+                        <tr key={record.id} className="hover:bg-slate-50/50 transition-colors group">
+                          <td className="px-6 py-4 font-mono text-sm text-slate-600">
+                            {record.invoiceNumber}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-600">
+                            {formatDate(record.installationDate)}
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={cn(
+                              "px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest",
+                              isSupportActive ? "bg-emerald-100 text-emerald-600" : "bg-red-100 text-red-600"
+                            )}>
+                              {isSupportActive ? 'Active' : 'Expired'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <button 
+                              onClick={() => setCommentRecord(record)}
+                              className="flex items-center gap-1.5 text-tillmax-blue hover:text-tillmax-blue/80 font-bold text-xs uppercase tracking-widest transition-colors"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5" />
+                              {record.comments ? 'View Comments' : 'Add Comment'}
+                            </button>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex flex-col">
+                              <span className={cn(
+                                "text-sm font-bold",
+                                record.paymentStatus === 'Payment cleared' ? "text-emerald-600" : "text-tillmax-red"
+                              )}>
+                                {record.paymentStatus}
                               </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {(record.licenseNumbers?.length > 0 || record.teamViewerIds?.length > 0) && (
-                        <div className="mt-4 flex flex-wrap gap-4">
-                          {record.licenseNumbers?.length > 0 && (
-                            <div>
-                              <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Licenses</p>
-                              <div className="flex flex-wrap gap-1">
-                                {record.licenseNumbers.map((lic, i) => (
-                                  <span key={i} className="bg-slate-50 text-slate-500 px-2 py-0.5 rounded border border-slate-100 text-[10px] font-mono">
-                                    {lic}
-                                  </span>
-                                ))}
-                              </div>
+                              {record.paymentStatus === 'Payment due' && (
+                                <span className="text-[10px] font-bold text-slate-400">£{record.paymentDueAmount}</span>
+                              )}
                             </div>
-                          )}
-                          {record.teamViewerIds?.length > 0 && (
-                            <div>
-                              <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">TeamViewer</p>
-                              <div className="flex flex-wrap gap-1">
-                                {record.teamViewerIds.map((tv, i) => (
-                                  <span key={i} className="bg-blue-50 text-tillmax-blue px-2 py-0.5 rounded border border-blue-100 text-[10px] font-mono">
-                                    {tv}
-                                  </span>
-                                ))}
-                              </div>
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              {isAdmin && (
+                                <button 
+                                  onClick={() => setRecordToDelete({ id: record.id!, invoice: record.invoiceNumber })}
+                                  className="p-2 text-slate-300 hover:text-red-500 transition-colors"
+                                  title="Delete Record"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+                              <Link to={`/records/${record.id}/edit`} className="p-2 text-slate-300 hover:text-tillmax-blue transition-colors">
+                                <Edit2 className="w-4 h-4" />
+                              </Link>
                             </div>
-                          )}
-                        </div>
-                      )}
-
-                      {record.renewalInformed && (
-                        <div className="mt-4 p-4 bg-blue-50 rounded-xl border border-blue-100 flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <Mail className="w-5 h-5 text-tillmax-blue" />
-                            <div>
-                              <p className="text-xs font-bold text-slate-400 uppercase">Renewal Informed</p>
-                              <p className="text-sm font-medium text-slate-700">
-                                Via {record.renewalInformedMethod} on {record.renewalInformedDate ? format(parseISO(record.renewalInformedDate), 'MMM d, yyyy') : 'N/A'}
-                              </p>
-                            </div>
-                          </div>
-                          <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                        </div>
-                      )}
-
-                      {record.comments && (
-                        <div className="mt-6 p-4 bg-amber-50 rounded-xl border border-amber-100 text-amber-900 text-sm italic">
-                          "{record.comments}"
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            {hasMore && (
-              <div className="mt-8 flex justify-center">
-                <button
-                  onClick={() => fetchRecords(true)}
-                  disabled={loadingMore}
-                  className="px-8 py-3 bg-white border-2 border-slate-100 hover:border-tillmax-blue hover:text-tillmax-blue text-slate-600 font-bold rounded-2xl transition-all disabled:opacity-50 shadow-sm"
-                >
-                  {loadingMore ? 'Loading...' : 'Load More Records'}
-                </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
-            )}
-          </>
-        )}
+              {hasMore && (
+                <div className="p-4 border-t border-slate-100 flex justify-center">
+                  <button
+                    onClick={() => fetchRecords(true)}
+                    disabled={loadingMore}
+                    className="px-6 py-2 bg-slate-50 hover:bg-slate-100 text-slate-600 text-sm font-bold rounded-xl transition-colors disabled:opacity-50"
+                  >
+                    {loadingMore ? 'Loading...' : 'Load More Records'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+
+      <CommentModal 
+        isOpen={!!commentRecord}
+        onClose={() => setCommentRecord(null)}
+        record={commentRecord}
+        onUpdate={() => {
+          fetchRecords();
+        }}
+      />
 
       {/* Delete Confirmation Modal */}
       {recordToDelete && (
@@ -482,7 +392,7 @@ export const BusinessDetail = () => {
             </div>
             <h3 className="text-2xl font-bold text-slate-900 mb-2">Delete Business?</h3>
             <p className="text-slate-600 mb-8">
-              Are you sure you want to delete <span className="font-bold text-slate-900">{business.name}</span>? This will NOT delete its instruction records, but the business profile will be removed.
+              Are you sure you want to delete <span className="font-bold text-slate-900">{business.name}</span>? This will NOT delete its installation records, but the business profile will be removed.
             </p>
             <div className="flex gap-4">
               <button 

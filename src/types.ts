@@ -11,6 +11,7 @@ export interface Business {
   address: string;
   postcode: string;
   postcode_lowercase?: string;
+  postcode_normalized?: string;
   createdAt: string;
 }
 
@@ -19,7 +20,7 @@ export interface Equipment {
   quantity: number;
 }
 
-export interface InstructionRecord {
+export interface InstallationRecord {
   id?: string;
   businessId: string;
   supportType: 'Online and telephone support' | 'Return to base' | 'On site';
@@ -29,6 +30,7 @@ export interface InstructionRecord {
   installationDate: string;
   equipment: Equipment[];
   paymentAmount: number;
+  vatStatus?: 'Inc VAT' | 'No VAT';
   paymentStatus: 'Payment cleared' | 'Payment due';
   paymentDueAmount: number;
   salesPerson: string;
@@ -40,7 +42,11 @@ export interface InstructionRecord {
   invoiceNumber_lowercase?: string;
   businessName?: string;
   businessName_lowercase?: string;
+  postcode?: string;
+  postcode_lowercase?: string;
+  postcode_normalized?: string;
   comments: string;
+  updatedAt?: any;
   renewalInformed?: boolean;
   renewalInformedMethod?: 'Email' | 'Text' | 'Other';
   renewalInformedDate?: string;
@@ -66,4 +72,20 @@ export interface LogEntry {
 export interface SimpleEntity {
   id?: string;
   name: string;
+}
+
+export interface EmailTemplate {
+  id?: string;
+  name: string;
+  subject: string;
+  body: string;
+  createdAt: string;
+}
+
+export interface SystemSetting {
+  id?: string;
+  gmailUser: string;
+  gmailAppPassword: string;
+  senderName: string;
+  updatedAt: string;
 }
