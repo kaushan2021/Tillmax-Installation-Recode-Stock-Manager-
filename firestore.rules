@@ -137,6 +137,23 @@ service cloud.firestore {
 
     match /equipmentTypes/{id} {
       allow read: if isAuthenticated();
+      allow create, delete: if isAdmin();
+      allow update: if isEmployee();
+    }
+
+    match /stockMovements/{id} {
+      allow read: if isAuthenticated();
+      allow create: if isEmployee();
+      allow update, delete: if isAdmin();
+    }
+
+    match /categories/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /suppliers/{id} {
+      allow read: if isAuthenticated();
       allow write: if isAdmin();
     }
 

@@ -74,6 +74,7 @@ import { BusinessForm } from './components/BusinessForm';
 import { BusinessDetail } from './components/BusinessDetail';
 import { InstallationRecordForm } from './components/InstallationRecordForm';
 import { AdminPanel } from './components/AdminPanel';
+import { StockManagement } from './components/StockManagement';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 // --- Components ---
@@ -327,6 +328,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
     { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
     { to: '/records', icon: FileText, label: 'Installation Records' },
     { to: '/businesses', icon: Package, label: 'Businesses' },
+    { to: '/stock', icon: Database, label: 'Stock Management' },
   ];
 
   if (profile?.role === 'ADMIN') {
@@ -1408,6 +1410,7 @@ function AppRoutes() {
         <Route path="/records/:id/edit" element={<InstallationRecordForm />} />
         <Route path="/records/new" element={<InstallationRecordForm />} />
         <Route path="/admin" element={<AdminPanel />} />
+        <Route path="/stock" element={<StockManagement />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </Layout>

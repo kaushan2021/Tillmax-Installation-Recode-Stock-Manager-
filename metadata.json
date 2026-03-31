@@ -1,5 +1,5 @@
 {
-  "name": "Tillmax Ltd",
-  "description": "A comprehensive system for Tillmax LTD to manage EPOS installation records, support status, and customer history, replacing manual Excel tracking.",
+  "name": "Installation Management System",
+  "description": "A comprehensive system for managing business installations, equipment tracking, and automated renewal notifications.",
   "requestFramePermissions": []
 }

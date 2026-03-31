@@ -74,6 +74,44 @@ export interface SimpleEntity {
   name: string;
 }
 
+export interface Category {
+  id?: string;
+  name: string;
+}
+
+export interface Supplier {
+  id?: string;
+  name: string;
+  email: string;
+  contactNumber: string;
+  address: string;
+}
+
+export interface EquipmentType {
+  id?: string;
+  name: string;
+  categoryId?: string;
+  supplierId?: string;
+  currentStock: number;
+  lowStockThreshold: number;
+}
+
+export type StockMovementType = 'IN' | 'OUT' | 'ADJUSTMENT';
+
+export interface StockMovement {
+  id?: string;
+  equipmentTypeId: string;
+  equipmentTypeName: string;
+  type: StockMovementType;
+  quantity: number;
+  previousStock: number;
+  newStock: number;
+  reason: string;
+  userId: string;
+  username: string;
+  timestamp: string;
+}
+
 export interface EmailTemplate {
   id?: string;
   name: string;

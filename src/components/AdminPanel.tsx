@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType, auth as clientAuth } from '../firebase';
 import { setDoc, collection, query, orderBy, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDoc, serverTimestamp, writeBatch, getDocs, limit, startAfter, getCountFromServer } from 'firebase/firestore';
 import { useAuth } from '../AuthProvider';
-import { UserProfile, SimpleEntity, UserRole, Business, InstallationRecord, EmailTemplate, SystemSetting } from '../types';
+import { UserProfile, SimpleEntity, UserRole, Business, InstallationRecord, EmailTemplate, SystemSetting, Category, Supplier } from '../types';
 import { 
   Users, 
   Shield, 
@@ -18,6 +18,7 @@ import {
   Code, 
   UserPlus,
   Mail,
+  Phone,
   User as UserIcon,
   Search,
   AlertCircle,
@@ -34,9 +35,13 @@ import {
   Clock,
   AlertTriangle,
   Eye,
-  EyeOff
+  EyeOff,
+  Filter,
+  MapPin,
+  Tag
 } from 'lucide-react';
 import { clsx } from 'clsx';
+import { motion } from 'motion/react';
 import { cn, formatDate, parseDate } from '../lib/utils';
 import { useUserManagement } from '../hooks/useUserManagement';
 import { UserForm } from './admin/UserForm';
@@ -557,6 +562,7 @@ const TemplateManager = () => {
   const [loading, setLoading] = useState(true);
   const [editingTemplate, setEditingTemplate] = useState<Partial<EmailTemplate> | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [deletingTemplate, setDeletingTemplate] = useState<{id: string, name: string} | null>(null);
   const { profile } = useAuth();
 
   useEffect(() => {
@@ -606,18 +612,22 @@ const TemplateManager = () => {
   };
 
   const handleDelete = async (id: string, name: string) => {
-    if (window.confirm(`Are you sure you want to delete template "${name}"?`)) {
-      try {
-        await deleteDoc(doc(db, 'emailTemplates', id));
-        await addDoc(collection(db, 'logs'), {
-          userId: profile?.uid,
-          username: profile?.username,
-          action: `deleted email template: ${name}`,
-          timestamp: new Date().toISOString(),
-        });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.DELETE, `emailTemplates/${id}`);
-      }
+    setDeletingTemplate({ id, name });
+  };
+
+  const confirmDelete = async () => {
+    if (!deletingTemplate) return;
+    try {
+      await deleteDoc(doc(db, 'emailTemplates', deletingTemplate.id));
+      await addDoc(collection(db, 'logs'), {
+        userId: profile?.uid,
+        username: profile?.username,
+        action: `deleted email template: ${deletingTemplate.name}`,
+        timestamp: new Date().toISOString(),
+      });
+      setDeletingTemplate(null);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `emailTemplates/${deletingTemplate.id}`);
     }
   };
 
@@ -759,6 +769,16 @@ const TemplateManager = () => {
           )}
         </div>
       </div>
+
+      <ConfirmationModal
+        isOpen={!!deletingTemplate}
+        onClose={() => setDeletingTemplate(null)}
+        onConfirm={confirmDelete}
+        title="Delete Template"
+        message={`Are you sure you want to delete the template "${deletingTemplate?.name}"? This action cannot be undone.`}
+        confirmText="Delete Template"
+        type="danger"
+      />
     </div>
   );
 };
@@ -771,6 +791,7 @@ const SmtpSettings = () => {
   });
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const { profile } = useAuth();
 
@@ -807,7 +828,8 @@ const SmtpSettings = () => {
         timestamp: new Date().toISOString(),
       });
 
-      alert("SMTP Settings updated successfully!");
+      setSuccessMessage("SMTP Settings updated successfully!");
+      setTimeout(() => setSuccessMessage(null), 5000);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'systemSettings/smtp');
     } finally {
@@ -827,6 +849,12 @@ const SmtpSettings = () => {
         <p className="text-slate-500 mb-8">Configure your Gmail SMTP settings for sending renewal notifications.</p>
 
         <form onSubmit={handleSave} className="space-y-6">
+          {successMessage && (
+            <div className="p-4 bg-emerald-50 border border-emerald-100 text-emerald-600 rounded-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
+              <CheckCircle className="w-5 h-5" />
+              <span className="text-sm font-bold">{successMessage}</span>
+            </div>
+          )}
           <div className="space-y-2">
             <label className="text-sm font-bold text-slate-700">Gmail Address</label>
             <input 
@@ -1060,7 +1088,33 @@ const MaintenancePanel = () => {
   const [testStatus, setTestStatus] = useState<string | null>(null);
   const [backupStatus, setBackupStatus] = useState<string | null>(null);
   const [isBackingUp, setIsBackingUp] = useState(false);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [password, setPassword] = useState('');
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
+  const [passwordError, setPasswordError] = useState(false);
   const { profile } = useAuth();
+
+  const handlePasswordSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password === '80808') {
+      if (pendingAction) {
+        pendingAction();
+      }
+      setShowPasswordModal(false);
+      setPassword('');
+      setPendingAction(null);
+      setPasswordError(false);
+    } else {
+      setPasswordError(true);
+    }
+  };
+
+  const triggerAction = (action: () => void) => {
+    setPendingAction(() => action);
+    setShowPasswordModal(true);
+    setPassword('');
+    setPasswordError(false);
+  };
 
   const migrateInstructionRecords = async () => {
     setConfirming(null);
@@ -1529,7 +1583,7 @@ const MaintenancePanel = () => {
             {confirming === 'businesses' && (
               <div className="flex items-center gap-3">
                 <button onClick={() => setConfirming(null)} className="px-4 py-2 text-slate-500 font-bold hover:text-slate-700">Cancel</button>
-                <button onClick={fixSearchIndex} className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 shadow-lg shadow-emerald-600/20">Confirm Fix</button>
+                <button onClick={() => triggerAction(fixSearchIndex)} className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 shadow-lg shadow-emerald-600/20">Confirm Fix</button>
               </div>
             )}
             {isMigrating && status && !status.includes('successfully') && (
@@ -1582,7 +1636,7 @@ const MaintenancePanel = () => {
             {confirming === 'records' && (
               <div className="flex items-center gap-3">
                 <button onClick={() => setConfirming(null)} className="px-4 py-2 text-slate-500 font-bold hover:text-slate-700">Cancel</button>
-                <button onClick={fixInstallationRecordsIndex} className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 shadow-lg shadow-emerald-600/20">Confirm Fix</button>
+                <button onClick={() => triggerAction(fixInstallationRecordsIndex)} className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 shadow-lg shadow-emerald-600/20">Confirm Fix</button>
               </div>
             )}
             {isMigrating && recordStatus && !recordStatus.includes('successfully') && (
@@ -1635,7 +1689,7 @@ const MaintenancePanel = () => {
             {confirming === ('legacy-migration' as any) && (
               <div className="flex items-center gap-3">
                 <button onClick={() => setConfirming(null)} className="px-4 py-2 text-slate-500 font-bold hover:text-slate-700">Cancel</button>
-                <button onClick={migrateInstructionRecords} className="px-6 py-2 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 shadow-lg shadow-red-600/20">Confirm Migration</button>
+                <button onClick={() => triggerAction(migrateInstructionRecords)} className="px-6 py-2 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 shadow-lg shadow-red-600/20">Confirm Migration</button>
               </div>
             )}
             {isMigrating && migrationStatus && !migrationStatus.includes('successfully') && (
@@ -1669,7 +1723,7 @@ const MaintenancePanel = () => {
             </div>
             
             <button 
-              onClick={exportRecordsToCSV}
+              onClick={() => triggerAction(exportRecordsToCSV)}
               disabled={isBackingUp}
               className="btn-primary flex items-center gap-2 px-8 whitespace-nowrap disabled:opacity-50"
             >
@@ -1717,7 +1771,7 @@ const MaintenancePanel = () => {
             {confirming === 'test-data' && (
               <div className="flex items-center gap-3">
                 <button onClick={() => setConfirming(null)} className="px-4 py-2 text-amber-500 font-bold hover:text-amber-700">Cancel</button>
-                <button onClick={generateTestData} className="px-6 py-2 bg-amber-600 text-white font-bold rounded-xl hover:bg-amber-700 shadow-lg shadow-amber-600/20">Confirm Generation</button>
+                <button onClick={() => triggerAction(generateTestData)} className="px-6 py-2 bg-amber-600 text-white font-bold rounded-xl hover:bg-amber-700 shadow-lg shadow-amber-600/20">Confirm Generation</button>
               </div>
             )}
 
@@ -1761,64 +1815,206 @@ const MaintenancePanel = () => {
           )}
         </div>
       </div>
+
+      {showPasswordModal && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+            <form onSubmit={handlePasswordSubmit} className="p-6 space-y-6">
+              <div className="flex items-start justify-between">
+                <div className="w-14 h-14 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center shadow-lg shadow-amber-100">
+                  <Shield className="w-7 h-7" />
+                </div>
+                <button 
+                  type="button"
+                  onClick={() => setShowPasswordModal(false)}
+                  className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-all"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="text-xl font-bold text-slate-900">Security Verification</h3>
+                <p className="text-slate-500 leading-relaxed">Please enter the maintenance password to proceed with this action.</p>
+              </div>
+
+              <div className="space-y-2">
+                <input 
+                  autoFocus
+                  type="password"
+                  className={cn(
+                    "input-field text-center text-2xl tracking-widest font-mono",
+                    passwordError && "border-red-500 bg-red-50"
+                  )}
+                  placeholder="•••••"
+                  value={password}
+                  onChange={e => {
+                    setPassword(e.target.value);
+                    setPasswordError(false);
+                  }}
+                />
+                {passwordError && (
+                  <p className="text-xs font-bold text-red-500 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    Incorrect password. Please try again.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowPasswordModal(false)}
+                  className="flex-1 px-6 py-3 text-slate-600 font-semibold hover:bg-slate-100 rounded-2xl transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 px-6 py-3 bg-tillmax-blue text-white font-bold rounded-2xl shadow-lg shadow-tillmax-blue/20 hover:bg-tillmax-blue/90 transition-all"
+                >
+                  Verify
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 const LookupManagement = () => {
-  const [activeLookup, setActiveLookup] = useState<'equipmentTypes' | 'salesPeople' | 'engineers' | 'softwareTypes'>('equipmentTypes');
-  const [items, setItems] = useState<SimpleEntity[]>([]);
-  const [newItem, setNewItem] = useState('');
+  const [activeLookup, setActiveLookup] = useState<'equipmentTypes' | 'salesPeople' | 'engineers' | 'softwareTypes' | 'categories' | 'suppliers'>('equipmentTypes');
+  const [items, setItems] = useState<any[]>([]);
+  const [newItem, setNewItem] = useState<any>({});
+  const [editingItem, setEditingItem] = useState<any | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const { profile } = useAuth();
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
 
   useEffect(() => {
     const q = query(collection(db, activeLookup), orderBy('name'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      setItems(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SimpleEntity)));
+      setItems(snapshot.docs.map(doc => {
+        const data = doc.data();
+        if (activeLookup === 'equipmentTypes') {
+          return {
+            id: doc.id,
+            ...data,
+            currentStock: typeof data.currentStock === 'number' ? data.currentStock : 0,
+            lowStockThreshold: typeof data.lowStockThreshold === 'number' ? data.lowStockThreshold : 5
+          };
+        }
+        return { id: doc.id, ...data };
+      }));
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, activeLookup);
     });
     return () => unsubscribe();
   }, [activeLookup]);
 
+  useEffect(() => {
+    const unsubCat = onSnapshot(query(collection(db, 'categories'), orderBy('name')), (snap) => {
+      setCategories(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category)));
+    });
+    const unsubSup = onSnapshot(query(collection(db, 'suppliers'), orderBy('name')), (snap) => {
+      setSuppliers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Supplier)));
+    });
+    return () => {
+      unsubCat();
+      unsubSup();
+    };
+  }, []);
+
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newItem.trim()) return;
+    if (activeLookup === 'suppliers') {
+      if (!newItem.name || !newItem.email) return;
+    } else if (activeLookup === 'equipmentTypes') {
+      if (!newItem.name) return;
+    } else {
+      if (!newItem.name?.trim()) return;
+    }
+
     try {
-      await addDoc(collection(db, activeLookup), { name: newItem.trim() });
+      const data = { ...newItem };
+      if (activeLookup === 'equipmentTypes') {
+        data.currentStock = Number(data.currentStock) || 0;
+        data.lowStockThreshold = Number(data.lowStockThreshold) || 5;
+      }
+      
+      await addDoc(collection(db, activeLookup), data);
+      const singularLabel = tabs.find(t => t.id === activeLookup)?.singular || activeLookup;
       await addDoc(collection(db, 'logs'), {
         userId: profile?.uid,
         username: profile?.username,
-        action: `added new ${activeLookup.slice(0, -1)}: ${newItem}`,
+        action: `added new ${singularLabel.toLowerCase()}: ${newItem.name}`,
         timestamp: new Date().toISOString(),
       });
-      setNewItem('');
+      setNewItem({});
+      setIsModalOpen(false);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, activeLookup);
     }
   };
 
-  const handleDelete = async (id: string, name: string) => {
-    if (window.confirm(`Are you sure you want to delete ${name}?`)) {
-      try {
-        await deleteDoc(doc(db, activeLookup, id));
-        await addDoc(collection(db, 'logs'), {
-          userId: profile?.uid,
-          username: profile?.username,
-          action: `deleted ${activeLookup.slice(0, -1)}: ${name}`,
-          timestamp: new Date().toISOString(),
-        });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.DELETE, `${activeLookup}/${id}`);
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingItem) return;
+
+    try {
+      const { id, ...data } = editingItem;
+      if (activeLookup === 'equipmentTypes') {
+        data.currentStock = Number(data.currentStock) || 0;
+        data.lowStockThreshold = Number(data.lowStockThreshold) || 5;
       }
+
+      await updateDoc(doc(db, activeLookup, id), data);
+      const singularLabel = tabs.find(t => t.id === activeLookup)?.singular || activeLookup;
+      await addDoc(collection(db, 'logs'), {
+        userId: profile?.uid,
+        username: profile?.username,
+        action: `updated ${singularLabel.toLowerCase()}: ${data.name}`,
+        timestamp: new Date().toISOString(),
+      });
+      setEditingItem(null);
+      setIsModalOpen(false);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, activeLookup);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!itemToDelete) return;
+    setIsDeleting(true);
+    try {
+      await deleteDoc(doc(db, activeLookup, itemToDelete.id));
+      const singularLabel = tabs.find(t => t.id === activeLookup)?.singular || activeLookup;
+      await addDoc(collection(db, 'logs'), {
+        userId: profile?.uid,
+        username: profile?.username,
+        action: `deleted ${singularLabel.toLowerCase()}: ${itemToDelete.name}`,
+        timestamp: new Date().toISOString(),
+      });
+      setItemToDelete(null);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `${activeLookup}/${itemToDelete.id}`);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
   const tabs = [
-    { id: 'equipmentTypes', label: 'Equipment', icon: Package },
-    { id: 'salesPeople', label: 'Sales People', icon: UserIcon },
-    { id: 'engineers', label: 'Engineers', icon: Wrench },
-    { id: 'softwareTypes', label: 'Software', icon: Code },
+    { id: 'equipmentTypes', label: 'Equipment', singular: 'Equipment', icon: Package },
+    { id: 'categories', label: 'Categories', singular: 'Category', icon: Filter },
+    { id: 'suppliers', label: 'Suppliers', singular: 'Supplier', icon: MapPin },
+    { id: 'salesPeople', label: 'Sales People', singular: 'Sales Person', icon: UserIcon },
+    { id: 'engineers', label: 'Engineers', singular: 'Engineer', icon: Wrench },
+    { id: 'softwareTypes', label: 'Software', singular: 'Software', icon: Code },
   ];
 
   return (
@@ -1827,7 +2023,12 @@ const LookupManagement = () => {
         {tabs.map(tab => (
           <button 
             key={tab.id}
-            onClick={() => setActiveLookup(tab.id as any)}
+            onClick={() => {
+              setActiveLookup(tab.id as any);
+              setItems([]); // Clear items to avoid stale data
+              setEditingItem(null);
+              setNewItem({});
+            }}
             className={clsx(
               "w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition-all",
               activeLookup === tab.id ? "bg-tillmax-blue text-white shadow-lg shadow-tillmax-blue/20" : "bg-white text-slate-500 hover:bg-slate-100"
@@ -1841,41 +2042,258 @@ const LookupManagement = () => {
 
       <div className="lg:col-span-3 space-y-6">
         <div className="card p-6">
-          <h3 className="text-lg font-bold text-slate-900 mb-6">Manage {tabs.find(t => t.id === activeLookup)?.label}</h3>
-          <form onSubmit={handleAdd} className="flex gap-3 mb-8">
-            <input 
-              required
-              type="text" 
-              placeholder={`Add new ${activeLookup.slice(0, -1)}...`} 
-              className="input-field" 
-              value={newItem}
-              onChange={e => setNewItem(e.target.value)}
-            />
-            <button type="submit" className="btn-primary flex items-center gap-2 px-8">
+          <div className="flex items-center justify-between mb-8">
+            <div>
+              <h3 className="text-xl font-black text-slate-900 tracking-tight">
+                {tabs.find(t => t.id === activeLookup)?.label}
+              </h3>
+              <p className="text-sm text-slate-500 font-medium">Manage your system lookup tables</p>
+            </div>
+            <button 
+              onClick={() => {
+                setEditingItem(null);
+                setNewItem({});
+                setIsModalOpen(true);
+              }}
+              className="btn-primary flex items-center gap-2 px-6 py-2.5 rounded-xl shadow-lg shadow-tillmax-blue/20 hover:scale-105 transition-transform"
+            >
               <Plus className="w-5 h-5" />
-              Add
+              Add {tabs.find(t => t.id === activeLookup)?.singular}
             </button>
-          </form>
+          </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-3">
             {items.map(item => (
-              <div key={item.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-xl border border-slate-100 group hover:border-tillmax-blue transition-all">
-                <span className="font-bold text-slate-700">{item.name}</span>
-                <button 
-                  onClick={() => handleDelete(item.id!, item.name)}
-                  className="p-2 text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+              <div key={item.id} className="flex items-center justify-between p-5 bg-white rounded-2xl border border-slate-100 group hover:border-tillmax-blue hover:shadow-xl hover:shadow-slate-200/50 transition-all duration-300">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center text-slate-400 group-hover:bg-tillmax-blue/10 group-hover:text-tillmax-blue transition-colors">
+                    {React.createElement(tabs.find(t => t.id === activeLookup)?.icon || Package, { className: "w-5 h-5" })}
+                  </div>
+                  <div>
+                    <div className="font-bold text-slate-900 text-lg">{item.name}</div>
+                    {activeLookup === 'suppliers' && (
+                      <div className="text-xs text-slate-500 flex items-center gap-4 mt-1 font-medium">
+                        <span className="flex items-center gap-1"><Mail className="w-3 h-3" /> {item.email}</span>
+                        {item.contactNumber && <span className="flex items-center gap-1"><Phone className="w-3 h-3" /> {item.contactNumber}</span>}
+                      </div>
+                    )}
+                    {activeLookup === 'equipmentTypes' && (
+                      <div className="text-xs text-slate-500 flex items-center gap-4 mt-1 font-medium">
+                        <span className="bg-slate-100 px-2 py-0.5 rounded text-[10px] uppercase tracking-wider font-bold">
+                          {categories.find(c => c.id === item.categoryId)?.name || 'Uncategorized'}
+                        </span>
+                        <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {suppliers.find(s => s.id === item.supplierId)?.name || 'No Supplier'}</span>
+                        <span className={clsx(
+                          "px-2 py-0.5 rounded text-[10px] uppercase tracking-wider font-bold",
+                          item.currentStock <= item.lowStockThreshold ? "bg-red-100 text-red-600" : "bg-green-100 text-green-600"
+                        )}>
+                          Stock: {item.currentStock}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0">
+                  <button 
+                    onClick={() => {
+                      setEditingItem(item);
+                      setIsModalOpen(true);
+                    }}
+                    className="p-2.5 bg-slate-50 text-slate-400 hover:bg-tillmax-blue hover:text-white rounded-xl transition-all"
+                    title="Edit Item"
+                  >
+                    <Edit2 className="w-4 h-4" />
+                  </button>
+                  <button 
+                    onClick={() => setItemToDelete({ id: item.id!, name: item.name })}
+                    className="p-2.5 bg-slate-50 text-slate-400 hover:bg-red-500 hover:text-white rounded-xl transition-all"
+                    title="Delete Item"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             ))}
             {items.length === 0 && (
-              <div className="col-span-full py-10 text-center text-slate-400 italic">
-                No items found. Add one above.
+              <div className="py-20 text-center bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200">
+                <div className="w-16 h-16 bg-white rounded-2xl shadow-sm flex items-center justify-center mx-auto mb-4">
+                  {React.createElement(tabs.find(t => t.id === activeLookup)?.icon || Package, { className: "w-8 h-8 text-slate-300" })}
+                </div>
+                <h4 className="text-slate-900 font-bold">No {tabs.find(t => t.id === activeLookup)?.label} Found</h4>
+                <p className="text-sm text-slate-500 mt-1">Click the add button to create your first item.</p>
               </div>
             )}
           </div>
         </div>
+
+        {/* Modal for Add/Edit */}
+        {isModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-100"
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-tillmax-blue/10 flex items-center justify-center text-tillmax-blue">
+                    {editingItem ? <Edit2 className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-slate-900 tracking-tight">
+                      {editingItem ? 'Edit' : 'Add New'} {tabs.find(t => t.id === activeLookup)?.singular}
+                    </h3>
+                    <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">Lookup Table Management</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setIsModalOpen(false)}
+                  className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-all"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <form onSubmit={editingItem ? handleUpdate : handleAdd} className="p-8 space-y-6">
+                <div className="space-y-5">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
+                      {tabs.find(t => t.id === activeLookup)?.singular} Name
+                    </label>
+                    <div className="relative group">
+                      <Tag className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-tillmax-blue transition-colors" />
+                      <input 
+                        required
+                        type="text" 
+                        placeholder={`Enter ${tabs.find(t => t.id === activeLookup)?.singular.toLowerCase()} name...`}
+                        className="input-field !pl-12 w-full bg-slate-50 border-transparent focus:bg-white focus:border-tillmax-blue transition-all" 
+                        value={editingItem ? editingItem.name : (newItem.name || '')}
+                        onChange={e => editingItem ? setEditingItem({...editingItem, name: e.target.value}) : setNewItem({...newItem, name: e.target.value})}
+                        autoFocus
+                      />
+                    </div>
+                  </div>
+
+                  {activeLookup === 'suppliers' && (
+                    <div className="grid grid-cols-1 gap-5">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Email Address</label>
+                        <div className="relative group">
+                          <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-tillmax-blue transition-colors" />
+                          <input 
+                            required
+                            type="email" 
+                            placeholder="supplier@example.com" 
+                            className="input-field !pl-12 w-full bg-slate-50 border-transparent focus:bg-white focus:border-tillmax-blue transition-all" 
+                            value={editingItem ? editingItem.email : (newItem.email || '')}
+                            onChange={e => editingItem ? setEditingItem({...editingItem, email: e.target.value}) : setNewItem({...newItem, email: e.target.value})}
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Contact Number</label>
+                        <div className="relative group">
+                          <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-tillmax-blue transition-colors" />
+                          <input 
+                            type="text" 
+                            placeholder="01234 567890" 
+                            className="input-field !pl-12 w-full bg-slate-50 border-transparent focus:bg-white focus:border-tillmax-blue transition-all" 
+                            value={editingItem ? editingItem.contactNumber : (newItem.contactNumber || '')}
+                            onChange={e => editingItem ? setEditingItem({...editingItem, contactNumber: e.target.value}) : setNewItem({...newItem, contactNumber: e.target.value})}
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Business Address</label>
+                        <div className="relative group">
+                          <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-tillmax-blue transition-colors" />
+                          <input 
+                            type="text" 
+                            placeholder="Full business address..." 
+                            className="input-field !pl-12 w-full bg-slate-50 border-transparent focus:bg-white focus:border-tillmax-blue transition-all" 
+                            value={editingItem ? editingItem.address : (newItem.address || '')}
+                            onChange={e => editingItem ? setEditingItem({...editingItem, address: e.target.value}) : setNewItem({...newItem, address: e.target.value})}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {activeLookup === 'equipmentTypes' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Category</label>
+                        <select 
+                          className="input-field w-full bg-slate-50 border-transparent focus:bg-white focus:border-tillmax-blue transition-all"
+                          value={editingItem ? editingItem.categoryId : (newItem.categoryId || '')}
+                          onChange={e => editingItem ? setEditingItem({...editingItem, categoryId: e.target.value}) : setNewItem({...newItem, categoryId: e.target.value})}
+                        >
+                          <option value="">Select Category</option>
+                          {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Supplier</label>
+                        <select 
+                          className="input-field w-full bg-slate-50 border-transparent focus:bg-white focus:border-tillmax-blue transition-all"
+                          value={editingItem ? editingItem.supplierId : (newItem.supplierId || '')}
+                          onChange={e => editingItem ? setEditingItem({...editingItem, supplierId: e.target.value}) : setNewItem({...newItem, supplierId: e.target.value})}
+                        >
+                          <option value="">Select Supplier</option>
+                          {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Initial Stock</label>
+                        <input 
+                          type="number" 
+                          className="input-field w-full bg-slate-50 border-transparent focus:bg-white focus:border-tillmax-blue transition-all" 
+                          value={editingItem ? editingItem.currentStock : (newItem.currentStock || 0)}
+                          onChange={e => editingItem ? setEditingItem({...editingItem, currentStock: e.target.value}) : setNewItem({...newItem, currentStock: e.target.value})}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Low Stock Alert</label>
+                        <input 
+                          type="number" 
+                          className="input-field w-full bg-slate-50 border-transparent focus:bg-white focus:border-tillmax-blue transition-all" 
+                          value={editingItem ? editingItem.lowStockThreshold : (newItem.lowStockThreshold || 5)}
+                          onChange={e => editingItem ? setEditingItem({...editingItem, lowStockThreshold: e.target.value}) : setNewItem({...newItem, lowStockThreshold: e.target.value})}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-3 pt-4">
+                  <button 
+                    type="button"
+                    onClick={() => setIsModalOpen(false)}
+                    className="flex-1 px-6 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit" 
+                    className="flex-[2] btn-primary flex items-center justify-center gap-2 px-8 py-3 rounded-2xl shadow-lg shadow-tillmax-blue/20"
+                  >
+                    {editingItem ? <Save className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
+                    {editingItem ? 'Save Changes' : `Add ${tabs.find(t => t.id === activeLookup)?.singular}`}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+
+        <ConfirmationModal 
+          isOpen={!!itemToDelete}
+          onClose={() => setItemToDelete(null)}
+          onConfirm={handleDelete}
+          title={`Delete ${tabs.find(t => t.id === activeLookup)?.singular}`}
+          message={`Are you sure you want to delete "${itemToDelete?.name}"? This action cannot be undone.`}
+          isProcessing={isDeleting}
+        />
       </div>
     </div>
   );

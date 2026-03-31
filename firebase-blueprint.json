@@ -87,7 +87,48 @@
     "EquipmentType": {
       "title": "Equipment Type",
       "type": "object",
-      "properties": { "name": { "type": "string" } }
+      "properties": { 
+        "name": { "type": "string" },
+        "categoryId": { "type": "string" },
+        "supplierId": { "type": "string" },
+        "currentStock": { "type": "number" },
+        "lowStockThreshold": { "type": "number" }
+      },
+      "required": ["name", "currentStock"]
+    },
+    "Category": {
+      "title": "Category",
+      "type": "object",
+      "properties": { "name": { "type": "string" } },
+      "required": ["name"]
+    },
+    "Supplier": {
+      "title": "Supplier",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "contactNumber": { "type": "string" },
+        "address": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "StockMovement": {
+      "title": "Stock Movement",
+      "type": "object",
+      "properties": {
+        "equipmentTypeId": { "type": "string" },
+        "equipmentTypeName": { "type": "string" },
+        "type": { "type": "string", "enum": ["IN", "OUT", "ADJUSTMENT"] },
+        "quantity": { "type": "number" },
+        "previousStock": { "type": "number" },
+        "newStock": { "type": "number" },
+        "reason": { "type": "string" },
+        "userId": { "type": "string" },
+        "username": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["equipmentTypeId", "type", "quantity", "timestamp"]
     },
     "SalesPerson": {
       "title": "Sales Person",
@@ -132,6 +173,9 @@
     "/users": { "schema": "User", "description": "Collection of users" },
     "/logs": { "schema": "Log", "description": "Collection of activity logs" },
     "/equipmentTypes": { "schema": "EquipmentType", "description": "Collection of equipment types" },
+    "/categories": { "schema": "Category", "description": "Collection of equipment categories" },
+    "/suppliers": { "schema": "Supplier", "description": "Collection of equipment suppliers" },
+    "/stockMovements": { "schema": "StockMovement", "description": "Collection of stock movements" },
     "/salesPeople": { "schema": "SalesPerson", "description": "Collection of sales people" },
     "/engineers": { "schema": "Engineer", "description": "Collection of engineers" },
     "/softwareTypes": { "schema": "SoftwareType", "description": "Collection of software types" },
