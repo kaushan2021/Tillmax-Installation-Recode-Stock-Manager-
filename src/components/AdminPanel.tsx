@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType, auth as clientAuth } from '../firebase';
 import { setDoc, collection, query, orderBy, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDoc, serverTimestamp, writeBatch, getDocs, limit, startAfter, getCountFromServer } from 'firebase/firestore';
 import { useAuth } from '../AuthProvider';
@@ -70,19 +70,7 @@ export const AdminPanel = () => {
   }, [isAdmin]);
 
   if (!isAdmin) {
-    return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto">
-            <ShieldAlert className="w-8 h-8" />
-          </div>
-          <h2 className="text-2xl font-bold text-slate-900">Access Denied</h2>
-          <p className="text-slate-500 max-w-md">
-            You do not have administrative privileges to access this panel.
-          </p>
-        </div>
-      </div>
-    );
+    return <Navigate to="/" replace />;
   }
 
   const tabs = [
@@ -145,6 +133,10 @@ const RenewalManagement = ({ onSwitchTab }: { onSwitchTab?: (tab: any) => void }
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [status, setStatus] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [hideInformed, setHideInformed] = useState(true);
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [pin, setPin] = useState('');
+  const [pinError, setPinError] = useState(false);
   const { profile } = useAuth();
 
   useEffect(() => {
@@ -177,7 +169,12 @@ const RenewalManagement = ({ onSwitchTab }: { onSwitchTab?: (tab: any) => void }
           businessContact: businessesMap.get(r.businessId)?.contactNumber || 'N/A'
         }));
 
-        setRecords(enrichedRenewals as any);
+        const currentYear = new Date().getFullYear().toString();
+        const filteredRenewals = hideInformed 
+          ? enrichedRenewals.filter(r => !(r.renewalInformed && r.renewalInformedDate?.startsWith(currentYear)))
+          : enrichedRenewals;
+
+        setRecords(filteredRenewals as any);
 
         // Fetch templates
         const tSnap = await getDocs(query(collection(db, 'emailTemplates'), orderBy('name')));
@@ -193,7 +190,7 @@ const RenewalManagement = ({ onSwitchTab }: { onSwitchTab?: (tab: any) => void }
     };
 
     fetchRenewals();
-  }, [showAll]);
+  }, [showAll, hideInformed]);
 
   const handleSelectAll = () => {
     if (selectedIds.length === records.length) {
@@ -233,6 +230,18 @@ const RenewalManagement = ({ onSwitchTab }: { onSwitchTab?: (tab: any) => void }
       document.body.removeChild(link);
     } catch (error) {
       console.error("Export failed", error);
+    }
+  };
+
+  const handlePinSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (pin === '60606') {
+      setShowPinModal(false);
+      setPin('');
+      setPinError(false);
+      sendBulkEmails();
+    } else {
+      setPinError(true);
     }
   };
 
@@ -278,10 +287,43 @@ const RenewalManagement = ({ onSwitchTab }: { onSwitchTab?: (tab: any) => void }
         let htmlBody = template.body;
         let subject = template.subject;
 
+        // 3. Prepare attachments for CID embedding
+        const attachments: any[] = [];
+        let logoHtml = '';
+        let footerHtml = '';
+
+        if (template.logo) {
+          const logoMatch = template.logo.match(/^data:(image\/[a-z]+);base64,(.+)$/);
+          if (logoMatch) {
+            attachments.push({
+              filename: 'logo.png',
+              content: logoMatch[2],
+              encoding: 'base64',
+              cid: 'logo'
+            });
+            logoHtml = '<img src="cid:logo" alt="Logo" style="max-width: 200px; height: auto; margin-bottom: 20px;" />';
+          }
+        }
+
+        if (template.footerImage) {
+          const footerMatch = template.footerImage.match(/^data:(image\/[a-z]+);base64,(.+)$/);
+          if (footerMatch) {
+            attachments.push({
+              filename: 'footer.png',
+              content: footerMatch[2],
+              encoding: 'base64',
+              cid: 'footerImage'
+            });
+            footerHtml = '<img src="cid:footerImage" alt="Footer" style="max-width: 100%; height: auto; margin-top: 20px;" />';
+          }
+        }
+
         const replacements = {
           '{businessName}': record.businessName,
           '{supportEndDate}': formatDate(record.supportEndDate, 'dd MMM yyyy'),
-          '{invoiceNumber}': record.invoiceNumber
+          '{invoiceNumber}': record.invoiceNumber,
+          '{logo}': logoHtml,
+          '{footerImage}': footerHtml
         };
 
         Object.entries(replacements).forEach(([tag, val]) => {
@@ -297,6 +339,7 @@ const RenewalManagement = ({ onSwitchTab }: { onSwitchTab?: (tab: any) => void }
             to: recipientEmail,
             subject: subject,
             html: htmlBody,
+            attachments,
             smtpConfig: {
               user: smtpSettings.gmailUser,
               pass: smtpSettings.gmailAppPassword,
@@ -367,6 +410,15 @@ const RenewalManagement = ({ onSwitchTab }: { onSwitchTab?: (tab: any) => void }
             <input 
               type="checkbox" 
               className="w-4 h-4 rounded border-slate-300 text-tillmax-blue focus:ring-tillmax-blue"
+              checked={hideInformed}
+              onChange={(e) => setHideInformed(e.target.checked)}
+            />
+            <span className="text-sm font-bold text-slate-700">Hide Informed (Current Year)</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer bg-white border border-slate-200 px-4 py-2 rounded-xl hover:bg-slate-50 transition-all">
+            <input 
+              type="checkbox" 
+              className="w-4 h-4 rounded border-slate-300 text-tillmax-blue focus:ring-tillmax-blue"
               checked={showAll}
               onChange={(e) => setShowAll(e.target.checked)}
             />
@@ -384,13 +436,27 @@ const RenewalManagement = ({ onSwitchTab }: { onSwitchTab?: (tab: any) => void }
 
       <div className="card p-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-4">
             <button 
               onClick={handleSelectAll}
               className="px-4 py-2 bg-slate-100 text-slate-700 font-bold rounded-lg hover:bg-slate-200 transition-all text-sm"
             >
-              {selectedIds.length === records.length ? 'Deselect All' : 'Select All'}
+              {selectedIds.length === records.length ? 'Deselect All' : 'Select All Visible'}
             </button>
+            {!hideInformed && (
+              <button 
+                onClick={() => {
+                  const currentYear = new Date().getFullYear().toString();
+                  const uninformedIds = records
+                    .filter(r => !(r.renewalInformed && r.renewalInformedDate?.startsWith(currentYear)))
+                    .map(r => r.id!);
+                  setSelectedIds(uninformedIds);
+                }}
+                className="px-4 py-2 bg-tillmax-blue/10 text-tillmax-blue font-bold rounded-lg hover:bg-tillmax-blue/20 transition-all text-sm"
+              >
+                Select Uninformed Only
+              </button>
+            )}
             <span className="text-sm font-medium text-slate-500">
               {selectedIds.length} records selected
             </span>
@@ -410,7 +476,7 @@ const RenewalManagement = ({ onSwitchTab }: { onSwitchTab?: (tab: any) => void }
             </div>
             <button 
               disabled={selectedIds.length === 0 || sending || templates.length === 0}
-              onClick={sendBulkEmails}
+              onClick={() => setShowPinModal(true)}
               className="btn-primary flex items-center gap-2 px-6 py-2 shadow-lg shadow-tillmax-blue/20 disabled:opacity-50 w-full md:w-auto"
             >
               {sending ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div> : <Send className="w-4 h-4" />}
@@ -504,7 +570,7 @@ const RenewalManagement = ({ onSwitchTab }: { onSwitchTab?: (tab: any) => void }
                     </td>
                     <td className="py-4 text-right">
                       <Link 
-                        to={`/installation-records/${record.id}`}
+                        to={`/records/${record.id}/edit`}
                         className="text-tillmax-blue hover:underline text-sm font-bold"
                       >
                         View Details
@@ -553,6 +619,87 @@ const RenewalManagement = ({ onSwitchTab }: { onSwitchTab?: (tab: any) => void }
           </table>
         </div>
       </div>
+
+      {/* PIN Modal for Bulk Emails */}
+      {showPinModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-100"
+          >
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center text-amber-600">
+                  <ShieldAlert className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 tracking-tight">Confirm Bulk Sending</h3>
+                  <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">Security Verification</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowPinModal(false)}
+                className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-all"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handlePinSubmit} className="p-8 space-y-6">
+              <div className="text-center space-y-2">
+                <div className="text-3xl font-black text-tillmax-blue">{selectedIds.length}</div>
+                <p className="text-slate-600 font-medium">
+                  Records selected for renewal emails.
+                </p>
+                <p className="text-sm text-slate-500">
+                  Are you sure you want to send these emails? Please enter the security PIN to proceed.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Security PIN</label>
+                <input 
+                  type="password" 
+                  placeholder="•••••" 
+                  className={clsx(
+                    "input-field w-full text-center text-2xl tracking-[0.5em] font-black",
+                    pinError ? "border-red-500 bg-red-50" : "bg-slate-50"
+                  )}
+                  value={pin}
+                  onChange={e => {
+                    setPin(e.target.value);
+                    setPinError(false);
+                  }}
+                  autoFocus
+                />
+                {pinError && (
+                  <p className="text-xs text-red-500 font-bold text-center animate-in fade-in slide-in-from-top-1">
+                    Incorrect PIN. Please try again.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button 
+                  type="button"
+                  onClick={() => setShowPinModal(false)}
+                  className="flex-1 px-6 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-all"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="flex-[2] btn-primary flex items-center justify-center gap-2 px-8 py-3 rounded-2xl shadow-lg shadow-tillmax-blue/20"
+                >
+                  <Send className="w-5 h-5" />
+                  Confirm & Send
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 };
@@ -575,6 +722,23 @@ const TemplateManager = () => {
     });
     return () => unsubscribe();
   }, []);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, field: 'logo' | 'footerImage') => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Limit file size to ~200KB to stay within Firestore document limits (1MB)
+    if (file.size > 200 * 1024) {
+      alert("Image is too large. Please select an image under 200KB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setEditingTemplate(prev => prev ? ({ ...prev, [field]: reader.result as string }) : null);
+    };
+    reader.readAsDataURL(file);
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -714,11 +878,61 @@ const TemplateManager = () => {
                 />
               </div>
 
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700">Template Logo</label>
+                  <div className="flex flex-col gap-3">
+                    {editingTemplate.logo && (
+                      <div className="relative w-full h-24 bg-slate-50 rounded-xl overflow-hidden border border-slate-100 flex items-center justify-center">
+                        <img src={editingTemplate.logo} alt="Logo Preview" className="max-h-full max-w-full object-contain" />
+                        <button 
+                          type="button"
+                          onClick={() => setEditingTemplate({...editingTemplate, logo: undefined})}
+                          className="absolute top-1 right-1 p-1 bg-red-500 text-white rounded-full hover:bg-red-600 shadow-sm"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
+                    <input 
+                      type="file" 
+                      accept="image/*"
+                      className="text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-tillmax-blue/10 file:text-tillmax-blue hover:file:bg-tillmax-blue/20"
+                      onChange={(e) => handleFileChange(e, 'logo')}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700">Footer Image</label>
+                  <div className="flex flex-col gap-3">
+                    {editingTemplate.footerImage && (
+                      <div className="relative w-full h-24 bg-slate-50 rounded-xl overflow-hidden border border-slate-100 flex items-center justify-center">
+                        <img src={editingTemplate.footerImage} alt="Footer Preview" className="max-h-full max-w-full object-contain" />
+                        <button 
+                          type="button"
+                          onClick={() => setEditingTemplate({...editingTemplate, footerImage: undefined})}
+                          className="absolute top-1 right-1 p-1 bg-red-500 text-white rounded-full hover:bg-red-600 shadow-sm"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
+                    <input 
+                      type="file" 
+                      accept="image/*"
+                      className="text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-tillmax-blue/10 file:text-tillmax-blue hover:file:bg-tillmax-blue/20"
+                      onChange={(e) => handleFileChange(e, 'footerImage')}
+                    />
+                  </div>
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="text-sm font-bold text-slate-700">Email Body (HTML supported)</label>
-                  <div className="flex gap-2">
-                    {['{businessName}', '{supportEndDate}', '{invoiceNumber}'].map(tag => (
+                  <div className="flex flex-wrap gap-2">
+                    {['{businessName}', '{supportEndDate}', '{invoiceNumber}', '{logo}', '{footerImage}'].map(tag => (
                       <button 
                         key={tag}
                         type="button"

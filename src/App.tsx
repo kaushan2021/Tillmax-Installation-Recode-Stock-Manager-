@@ -38,10 +38,10 @@ import {
   Download,
   Filter,
   RefreshCw,
-  MessageSquare
+  MessageSquare,
+  TrendingUp
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { CommentModal } from './components/CommentModal';
 import { 
   collection, 
   query, 
@@ -66,18 +66,38 @@ import { signOut } from 'firebase/auth';
 import { db, auth, handleFirestoreError, OperationType } from './firebase';
 import { AuthProvider, useAuth } from './AuthProvider';
 import { Business, InstallationRecord, UserProfile, LogEntry, SimpleEntity, UserRole } from './types';
-import { addYears, isAfter, addMonths } from 'date-fns';
+import { addYears, isAfter, addMonths, startOfMonth, endOfMonth, format } from 'date-fns';
 import { cn, formatDate, parseDate, formatDateTime } from './lib/utils';
 
 // Import components
-import { BusinessForm } from './components/BusinessForm';
-import { BusinessDetail } from './components/BusinessDetail';
-import { InstallationRecordForm } from './components/InstallationRecordForm';
 import { AdminPanel } from './components/AdminPanel';
 import { StockManagement } from './components/StockManagement';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { InstallationEdit } from './components/InstallationEdit';
+import { BusinessDetail } from './components/BusinessDetail';
+import { BusinessEdit } from './components/BusinessEdit';
 
 // --- Components ---
+
+const LoadingScreen = ({ message = "Authenticating..." }: { message?: string }) => (
+  <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50">
+    <motion.div
+      initial={{ scale: 0.8, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={{ duration: 1, repeat: Infinity, repeatType: "reverse" }}
+      className="mb-12"
+    >
+      <Logo className="scale-150" />
+    </motion.div>
+    <div className="flex flex-col items-center gap-6">
+      <div className="relative w-20 h-20">
+        <div className="absolute inset-0 border-4 border-slate-200 rounded-full"></div>
+        <div className="absolute inset-0 border-4 border-tillmax-blue rounded-full border-t-transparent animate-spin"></div>
+      </div>
+      <p className="text-slate-500 font-black uppercase tracking-[0.3em] text-[10px] animate-pulse">{message}</p>
+    </div>
+  </div>
+);
 
 const Logo = ({ className }: { className?: string }) => (
   <div className={cn("flex items-center", className)}>
@@ -164,6 +184,9 @@ const Login = () => {
     setIsLoggingIn(true);
     try {
       await login(email, password);
+      // Successful login - the AppRoutes will handle the switch to Layout
+      // but we force a navigation to dashboard to clear any previous restricted URL
+      navigate('/', { replace: true });
     } catch (err: any) {
       console.error("Login failed", err);
       const isUserNotFound = err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential';
@@ -213,12 +236,7 @@ const Login = () => {
     }
   };
 
-  if (loading) return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50">
-      <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-tillmax-blue mb-6"></div>
-      <p className="text-slate-500 font-medium animate-pulse">Authenticating...</p>
-    </div>
-  );
+  if (loading || isLoggingIn) return <LoadingScreen message={isLoggingIn ? "Signing you in..." : "Authenticating..."} />;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
@@ -412,14 +430,21 @@ const Dashboard = () => {
   const { profile } = useAuth();
   const navigate = useNavigate();
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [currentTime, setCurrentTime] = useState(new Date());
   const [stats, setStats] = useState({
     totalBusinesses: 0,
     totalRecords: 0,
     paymentDue: 0,
     activeSupport: 0,
     expiringSoon: 0,
-    expiredSupport: 0
+    expiredSupport: 0,
+    monthlyRecords: 0
   });
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!profile) return;
@@ -439,11 +464,15 @@ const Dashboard = () => {
         const nextMonth = addMonths(now, 1);
         const nowIso = now.toISOString();
         const nextMonthIso = nextMonth.toISOString();
+        
+        const monthStart = startOfMonth(now).toISOString();
+        const monthEnd = endOfMonth(now).toISOString();
 
         // Use getCountFromServer for total counts (very fast)
-        const [businessesCount, recordsCount] = await Promise.all([
+        const [businessesCount, recordsCount, monthlyCount] = await Promise.all([
           getCountFromServer(collection(db, 'businesses')),
-          getCountFromServer(collection(db, 'installationRecords'))
+          getCountFromServer(collection(db, 'installationRecords')),
+          getCountFromServer(query(collection(db, 'installationRecords'), where('installationDate', '>=', monthStart), where('installationDate', '<=', monthEnd)))
         ]);
 
         // Targeted queries for support status counts
@@ -468,7 +497,8 @@ const Dashboard = () => {
           paymentDue: dueAmount,
           activeSupport: activeCount.data().count,
           expiringSoon: expiringCount.data().count,
-          expiredSupport: expiredCount.data().count
+          expiredSupport: expiredCount.data().count,
+          monthlyRecords: monthlyCount.data().count
         });
       } catch (error) {
         console.error("Stats fetch error:", error);
@@ -480,132 +510,217 @@ const Dashboard = () => {
     return () => unsubscribe();
   }, [profile]);
 
-  return (
-    <div>
-      <PageHeader 
-        title={`Welcome back, ${profile?.username}`} 
-        subtitle="Here's what's happening with Tillmax records today."
-      />
+  const containerVariants = {
+    hidden: { opacity: 0 },
+    visible: {
+      opacity: 1,
+      transition: {
+        staggerChildren: 0.1
+      }
+    }
+  } as const;
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
-        <div 
-          className="card p-4 flex items-center gap-3 border-l-4 border-tillmax-blue cursor-pointer hover:bg-blue-50/50 transition-all"
-          onClick={() => navigate('/businesses')}
-        >
-          <div className="w-10 h-10 bg-tillmax-blue/10 rounded-xl flex items-center justify-center text-tillmax-blue shrink-0">
-            <Package className="w-5 h-5" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-xs font-medium text-slate-500 truncate">Total Businesses</p>
-            <p className="text-xl font-bold text-slate-900">{stats.totalBusinesses}</p>
-          </div>
-        </div>
-        <div 
-          className="card p-4 flex items-center gap-3 border-l-4 border-emerald-500 cursor-pointer hover:bg-emerald-50/50 transition-all"
-          onClick={() => navigate('/records')}
-        >
-          <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center text-emerald-600 shrink-0">
-            <FileText className="w-5 h-5" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-xs font-medium text-slate-500 truncate">Total Records</p>
-            <p className="text-xl font-bold text-slate-900">{stats.totalRecords}</p>
-          </div>
-        </div>
-        <div 
-          className="card p-4 flex items-center gap-3 border-l-4 border-tillmax-red cursor-pointer hover:bg-red-50/50 transition-all"
-          onClick={() => navigate('/records?status=Payment due')}
-        >
-          <div className="w-10 h-10 bg-red-50 rounded-xl flex items-center justify-center text-tillmax-red shrink-0">
-            <DollarSign className="w-5 h-5" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-xs font-medium text-slate-500 truncate">Payments Due</p>
-            <p className="text-xl font-bold text-slate-900">£{stats.paymentDue.toLocaleString()}</p>
-          </div>
-        </div>
-        <div 
-          className="card p-4 flex items-center gap-3 border-l-4 border-amber-500 cursor-pointer hover:bg-amber-50/50 transition-all"
-          onClick={() => navigate('/records?filter=expiring')}
-        >
-          <div className="w-10 h-10 bg-amber-50 rounded-xl flex items-center justify-center text-amber-600 shrink-0">
-            <Clock className="w-5 h-5" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-xs font-medium text-slate-500 truncate">Expiring Soon</p>
-            <p className="text-xl font-bold text-slate-900">{stats.expiringSoon}</p>
-          </div>
-        </div>
-        <div 
-          className="card p-4 flex items-center gap-3 border-l-4 border-red-600 cursor-pointer hover:bg-red-50/50 transition-all"
-          onClick={() => navigate('/records?filter=expired')}
-        >
-          <div className="w-10 h-10 bg-red-50 rounded-xl flex items-center justify-center text-red-600 shrink-0">
-            <AlertCircle className="w-5 h-5" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-xs font-medium text-slate-500 truncate">Expired Support</p>
-            <p className="text-xl font-bold text-slate-900">{stats.expiredSupport}</p>
-          </div>
-        </div>
-        <div className="card p-4 flex items-center gap-3 border-l-4 border-indigo-500">
-          <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 shrink-0">
-            <Phone className="w-5 h-5" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-xs font-medium text-slate-500 truncate">Active Support</p>
-            <p className="text-xl font-bold text-slate-900">{stats.activeSupport}</p>
-          </div>
-        </div>
+  const itemVariants = {
+    hidden: { y: 20, opacity: 0 },
+    visible: {
+      y: 0,
+      opacity: 1,
+      transition: {
+        type: "spring",
+        stiffness: 100
+      }
+    }
+  } as const;
+
+  const quickActions = [
+    { label: 'New Installation', icon: Plus, to: '/records/new', color: 'bg-tillmax-blue' },
+    { label: 'Add Business', icon: UserPlus, to: '/businesses/new', color: 'bg-emerald-500' },
+    { label: 'Check Stock', icon: Database, to: '/stock', color: 'bg-amber-500' },
+    { label: 'System Logs', icon: History, to: '/admin', color: 'bg-slate-700' },
+  ];
+
+  return (
+    <motion.div
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
+      className="space-y-10"
+    >
+      <motion.div variants={itemVariants}>
+        <PageHeader 
+          title={`Welcome back, ${profile?.username}`} 
+          subtitle="Here's what's happening with Tillmax records today."
+        />
+      </motion.div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {[
+          { label: 'Total Businesses', value: stats.totalBusinesses, icon: Package, color: 'tillmax-blue', bg: 'bg-tillmax-blue/10', text: 'text-tillmax-blue', border: 'border-tillmax-blue', path: '/businesses' },
+          { label: 'Total Records', value: stats.totalRecords, icon: FileText, color: 'emerald-500', bg: 'bg-emerald-500/10', text: 'text-emerald-500', border: 'border-emerald-500', path: '/records' },
+          { label: 'Payments Due', value: `£${stats.paymentDue.toLocaleString()}`, icon: DollarSign, color: 'tillmax-red', bg: 'bg-tillmax-red/10', text: 'text-tillmax-red', border: 'border-tillmax-red', path: '/records?status=Payment due' },
+          { label: 'Expiring Soon', value: stats.expiringSoon, icon: Clock, color: 'amber-500', bg: 'bg-amber-500/10', text: 'text-amber-500', border: 'border-amber-500', path: '/records?filter=expiring' },
+          { label: 'Expired Support', value: stats.expiredSupport, icon: AlertCircle, color: 'red-600', bg: 'bg-red-600/10', text: 'text-red-600', border: 'border-red-600', path: '/records?filter=expired' },
+          { label: 'Active Support', value: stats.activeSupport, icon: Phone, color: 'indigo-500', bg: 'bg-indigo-500/10', text: 'text-indigo-500', border: 'border-indigo-500', path: '/records' },
+        ].map((stat, idx) => (
+          <motion.div
+            key={idx}
+            variants={itemVariants}
+            whileHover={{ y: -5, transition: { duration: 0.2 } }}
+            className={cn(
+              "card p-6 flex items-center gap-5 border-l-4 cursor-pointer group transition-all relative overflow-hidden",
+              stat.border
+            )}
+            onClick={() => navigate(stat.path)}
+          >
+            <div className={cn(
+              "w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 transition-transform group-hover:scale-110 duration-300 shadow-lg",
+              stat.bg, stat.text
+            )}>
+              <stat.icon className="w-7 h-7" />
+            </div>
+            <div className="min-w-0 relative z-10">
+              <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">{stat.label}</p>
+              <p className="text-3xl font-black text-slate-900 tracking-tight">{stat.value}</p>
+            </div>
+            <div className={cn(
+              "absolute -right-4 -bottom-4 w-24 h-24 opacity-[0.03] transition-transform group-hover:scale-125 duration-500",
+              stat.text
+            )}>
+              <stat.icon className="w-full h-full" />
+            </div>
+          </motion.div>
+        ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
-        <div className="lg:col-span-2 space-y-6">
-          <div className="card">
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="font-bold text-slate-900 flex items-center gap-2">
-                <History className="w-5 h-5 text-tillmax-blue" />
+        <div className="lg:col-span-2 space-y-8">
+          <motion.div variants={itemVariants} className="card border-none shadow-xl shadow-slate-200/50">
+            <div className="px-8 py-6 border-b border-slate-50 flex items-center justify-between bg-slate-50/30">
+              <h3 className="font-black text-slate-900 flex items-center gap-3 uppercase tracking-wider text-sm">
+                <div className="w-8 h-8 bg-tillmax-blue/10 rounded-lg flex items-center justify-center">
+                  <History className="w-4 h-4 text-tillmax-blue" />
+                </div>
                 Recent Activity Logs
               </h3>
+              <button className="text-xs font-bold text-tillmax-blue hover:underline">View All Logs</button>
             </div>
             <div className="divide-y divide-slate-50">
               {logs.length === 0 ? (
-                <div className="p-10 text-center text-slate-400">No recent activity</div>
+                <div className="p-16 text-center">
+                  <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <History className="w-8 h-8 text-slate-200" />
+                  </div>
+                  <p className="text-slate-400 font-medium">No recent activity found</p>
+                </div>
               ) : (
-                logs.map(log => (
-                  <div key={log.id} className="px-6 py-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 font-bold text-xs">
-                        {log.username?.[0]?.toUpperCase()}
+                logs.map((log, idx) => (
+                  <motion.div 
+                    key={log.id} 
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: idx * 0.05 }}
+                    className="px-8 py-5 flex items-center justify-between hover:bg-slate-50/80 transition-colors group"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="relative">
+                        <div className="w-10 h-10 bg-white border-2 border-slate-100 rounded-xl flex items-center justify-center text-slate-600 font-black text-xs shadow-sm group-hover:border-tillmax-blue group-hover:text-tillmax-blue transition-all">
+                          {log.username?.[0]?.toUpperCase()}
+                        </div>
+                        <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-emerald-500 border-2 border-white rounded-full"></div>
                       </div>
                       <div>
-                        <p className="text-sm font-medium text-slate-900">
-                          <span className="font-bold">{log.username}</span> {log.action}
+                        <p className="text-sm font-medium text-slate-600 leading-relaxed">
+                          <span className="font-black text-slate-900">{log.username}</span> {log.action}
                         </p>
-                        <p className="text-xs text-slate-400">{log.timestamp ? formatDateTime(log.timestamp) : 'Just now'}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <Clock className="w-3 h-3 text-slate-300" />
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                            {log.timestamp ? formatDateTime(log.timestamp) : 'Just now'}
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                    <ChevronRight className="w-4 h-4 text-slate-300 opacity-0 group-hover:opacity-100 transition-all -translate-x-2 group-hover:translate-x-0" />
+                  </motion.div>
                 ))
               )}
             </div>
-          </div>
+          </motion.div>
         </div>
 
-        <div className="space-y-6">
-          <div className="card bg-tillmax-blue text-white p-8 relative overflow-hidden">
+        <div className="space-y-8">
+          <motion.div variants={itemVariants} className="card p-8 bg-slate-900 text-white relative overflow-hidden group shadow-2xl shadow-slate-900/20">
             <div className="relative z-10">
-              <h3 className="text-xl font-bold mb-2">Need Help?</h3>
-              <p className="text-blue-100 text-sm mb-6">Access the Tillmax internal knowledge base or contact the IT administrator.</p>
-              <button className="bg-white text-tillmax-blue font-bold py-2 px-6 rounded-xl text-sm hover:bg-blue-50 transition-colors">
-                View Documentation
+              <div className="flex items-center justify-between mb-8">
+                <div className="w-14 h-14 bg-white/5 rounded-2xl flex items-center justify-center backdrop-blur-md border border-white/10 shadow-inner">
+                  <Calendar className="w-7 h-7 text-tillmax-red animate-pulse" />
+                </div>
+                <div className="text-right">
+                  <p className="text-4xl font-black tracking-tighter text-tillmax-red drop-shadow-[0_0_10px_rgba(238,28,37,0.3)]">{format(currentTime, 'HH:mm:ss')}</p>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mt-1">{format(currentTime, 'EEEE, MMMM do')}</p>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div className="bg-gradient-to-br from-white/5 to-white/[0.02] rounded-3xl p-6 border border-white/10 relative overflow-hidden group/card">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-4">Monthly Performance</p>
+                  <div className="flex items-end justify-between relative z-10">
+                    <div>
+                      <p className="text-5xl font-black text-tillmax-blue tracking-tight drop-shadow-[0_0_15px_rgba(0,51,153,0.4)]">{stats.monthlyRecords}</p>
+                      <p className="text-xs font-bold text-slate-400 mt-2">Installations this month</p>
+                    </div>
+                    <div className="w-14 h-14 bg-tillmax-blue/20 rounded-2xl flex items-center justify-center text-tillmax-blue border border-tillmax-blue/20 shadow-lg shadow-tillmax-blue/20 transition-transform group-hover/card:scale-110 duration-300">
+                      <TrendingUp className="w-7 h-7" />
+                    </div>
+                  </div>
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-tillmax-blue/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
+                </div>
+
+                <div className="grid grid-cols-7 gap-1.5 text-center">
+                  {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, idx) => (
+                    <span key={`${day}-${idx}`} className="text-[10px] font-black text-slate-600 mb-1">{day}</span>
+                  ))}
+                  {Array.from({ length: 31 }).map((_, i) => {
+                    const day = i + 1;
+                    const isToday = day === currentTime.getDate();
+                    return (
+                      <div 
+                        key={i} 
+                        className={cn(
+                          "aspect-square flex items-center justify-center text-[10px] font-black rounded-xl transition-all duration-300",
+                          isToday 
+                            ? "bg-tillmax-red text-white shadow-[0_0_20px_rgba(238,28,37,0.4)] scale-110 ring-2 ring-white/20" 
+                            : "text-slate-500 hover:bg-white/5 hover:text-slate-300"
+                        )}
+                      >
+                        {day}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+            {/* Dynamic Brand Accents */}
+            <div className="absolute -top-20 -right-20 w-64 h-64 bg-tillmax-red/10 rounded-full blur-[100px] animate-pulse"></div>
+            <div className="absolute -bottom-20 -left-20 w-64 h-64 bg-tillmax-blue/20 rounded-full blur-[100px]"></div>
+          </motion.div>
+
+          <motion.div variants={itemVariants} className="card p-8 bg-gradient-to-br from-tillmax-blue to-blue-900 text-white relative overflow-hidden group">
+            <div className="relative z-10">
+              <h3 className="text-xl font-black mb-2 flex items-center gap-2">
+                <MessageSquare className="w-5 h-5" />
+                Support Center
+              </h3>
+              <p className="text-blue-100/70 text-xs mb-6 leading-relaxed font-medium">Access technical documentation or contact the IT administrator for system assistance.</p>
+              <button className="w-full bg-white text-tillmax-blue font-black py-3 px-6 rounded-2xl text-xs uppercase tracking-widest hover:bg-blue-50 transition-all shadow-xl shadow-blue-950/50 active:scale-95">
+                Open Documentation
               </button>
             </div>
-            <Shield className="absolute -bottom-6 -right-6 w-32 h-32 text-white/10 rotate-12" />
-          </div>
+            <Logo className="absolute -bottom-8 -right-8 w-48 h-48 opacity-10 -rotate-12 pointer-events-none" />
+          </motion.div>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 };
 
@@ -1049,7 +1164,6 @@ const InstallationRecords = () => {
   }, [search, postcodeSearch, invoiceSearch, statusFilter, quickFilter, profile]);
 
   const [recordToDelete, setRecordToDelete] = useState<{ id: string, invoice: string } | null>(null);
-  const [commentRecord, setCommentRecord] = useState<InstallationRecord | null>(null);
 
   const handleDeleteRecord = async () => {
     if (!isAdmin || !recordToDelete) return;
@@ -1221,7 +1335,6 @@ const InstallationRecords = () => {
               <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Invoice</th>
               <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Install Date</th>
               <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Support Status</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Comments</th>
               <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Payment</th>
               <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider text-right">Action</th>
             </tr>
@@ -1262,15 +1375,6 @@ const InstallationRecords = () => {
                       )}>
                         {isSupportActive ? 'Active' : 'Expired'}
                       </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <button 
-                        onClick={() => setCommentRecord(record)}
-                        className="flex items-center gap-1.5 text-tillmax-blue hover:text-tillmax-blue/80 font-bold text-xs uppercase tracking-widest transition-colors"
-                      >
-                        <MessageSquare className="w-3.5 h-3.5" />
-                        {record.comments ? 'View Comments' : 'Add Comment'}
-                      </button>
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex flex-col">
@@ -1321,15 +1425,6 @@ const InstallationRecords = () => {
           </div>
         )}
       </div>
-
-      <CommentModal 
-        isOpen={!!commentRecord}
-        onClose={() => setCommentRecord(null)}
-        record={commentRecord}
-        onUpdate={() => {
-          fetchRecords();
-        }}
-      />
 
       {/* Delete Confirmation Modal */}
       <AnimatePresence>
@@ -1385,14 +1480,9 @@ export default function App() {
 }
 
 function AppRoutes() {
-  const { user, profile, loading } = useAuth();
+  const { user, profile, loading, isAdmin } = useAuth();
 
-  if (loading) return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50">
-      <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-tillmax-blue mb-6"></div>
-      <p className="text-slate-500 font-medium animate-pulse">Authenticating...</p>
-    </div>
-  );
+  if (loading) return <LoadingScreen />;
 
   if (!user || !profile) {
     return <Login />;
@@ -1403,13 +1493,16 @@ function AppRoutes() {
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/businesses" element={<Businesses />} />
+        <Route path="/businesses/new" element={<BusinessEdit />} />
         <Route path="/businesses/:id" element={<BusinessDetail />} />
-        <Route path="/businesses/:id/edit" element={<BusinessForm />} />
-        <Route path="/businesses/new" element={<BusinessForm />} />
+        <Route path="/businesses/:id/edit" element={<BusinessEdit />} />
         <Route path="/records" element={<InstallationRecords />} />
-        <Route path="/records/:id/edit" element={<InstallationRecordForm />} />
-        <Route path="/records/new" element={<InstallationRecordForm />} />
-        <Route path="/admin" element={<AdminPanel />} />
+        <Route path="/records/new" element={<InstallationEdit />} />
+        <Route path="/records/:id/edit" element={<InstallationEdit />} />
+        <Route 
+          path="/admin" 
+          element={isAdmin ? <AdminPanel /> : <Navigate to="/" replace />} 
+        />
         <Route path="/stock" element={<StockManagement />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>

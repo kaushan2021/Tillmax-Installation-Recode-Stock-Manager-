@@ -27,7 +27,6 @@ import {
   Building2,
   Tag
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { format } from 'date-fns';
 
@@ -48,7 +47,22 @@ export const StockManagement = () => {
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [businessSearch, setBusinessSearch] = useState('');
   const [selectedBusiness, setSelectedBusiness] = useState<Business | null>(null);
+  const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
+  const [supplierSearch, setSupplierSearch] = useState('');
+  const [showSupplierResults, setShowSupplierResults] = useState(false);
   const [showBusinessResults, setShowBusinessResults] = useState(false);
+  const [filteredSuppliers, setFilteredSuppliers] = useState<Supplier[]>([]);
+
+  useEffect(() => {
+    if (adjustmentType === 'IN' && supplierSearch.length >= 2) {
+      const results = suppliers.filter(s => s.name.toLowerCase().includes(supplierSearch.toLowerCase())).slice(0, 5);
+      setFilteredSuppliers(results);
+      setShowSupplierResults(true);
+    } else {
+      setFilteredSuppliers([]);
+      setShowSupplierResults(false);
+    }
+  }, [supplierSearch, adjustmentType, suppliers]);
 
   useEffect(() => {
     if (adjustmentType === 'OUT' && businessSearch.length >= 2) {
@@ -117,11 +131,34 @@ export const StockManagement = () => {
   }, []);
 
   const handleAdjustStock = async () => {
-    if (!adjustingItem || adjustmentValue <= 0) return;
+    if (!adjustingItem) return;
     
-    const quantity = adjustmentType === 'OUT' ? -adjustmentValue : adjustmentValue;
-    const newStock = Math.max(0, (adjustingItem.currentStock || 0) + quantity);
+    // For IN/OUT, we need a positive value. For ADJUSTMENT, we allow 0 or more.
+    if (adjustmentType !== 'ADJUSTMENT' && adjustmentValue <= 0) return;
+    if (adjustmentType === 'ADJUSTMENT' && adjustmentValue < 0) return;
+
+    let newStock: number;
+    let delta: number;
+
+    if (adjustmentType === 'ADJUSTMENT') {
+      newStock = adjustmentValue;
+      delta = newStock - (adjustingItem.currentStock || 0);
+    } else {
+      delta = adjustmentType === 'OUT' ? -adjustmentValue : adjustmentValue;
+      newStock = Math.max(0, (adjustingItem.currentStock || 0) + delta);
+    }
     
+    const recordedQuantity = adjustmentType === 'ADJUSTMENT' ? Math.abs(delta) : adjustmentValue;
+    
+    let finalReason = adjustmentReason;
+    if (adjustmentType === 'OUT' && selectedBusiness) {
+      finalReason = `Installation for ${selectedBusiness.name}${adjustmentReason ? ': ' + adjustmentReason : ''}`;
+    } else if (adjustmentType === 'IN' && selectedSupplier) {
+      finalReason = `Stock received from ${selectedSupplier.name}${adjustmentReason ? ': ' + adjustmentReason : ''}`;
+    } else if (!finalReason) {
+      finalReason = adjustmentType === 'IN' ? 'Stock received' : adjustmentType === 'OUT' ? 'Stock issued' : 'Manual adjustment';
+    }
+
     try {
       // Update inventory
       await updateDoc(doc(db, 'equipmentTypes', adjustingItem.id!), {
@@ -133,20 +170,22 @@ export const StockManagement = () => {
         equipmentTypeId: adjustingItem.id,
         equipmentTypeName: adjustingItem.name,
         type: adjustmentType,
-        quantity: adjustmentValue,
+        quantity: recordedQuantity,
         previousStock: adjustingItem.currentStock,
         newStock: newStock,
-        reason: adjustmentReason || (adjustmentType === 'IN' ? 'Stock received' : adjustmentType === 'OUT' ? 'Stock issued' : 'Manual adjustment'),
+        reason: finalReason,
         userId: profile?.uid,
         username: profile?.username,
         timestamp: new Date().toISOString(),
+        businessId: selectedBusiness?.id || null,
+        supplierId: selectedSupplier?.id || null
       });
 
       // Log action
       await addDoc(collection(db, 'logs'), {
         userId: profile?.uid,
         username: profile?.username,
-        action: `${adjustmentType} adjustment for ${adjustingItem.name}: ${quantity > 0 ? '+' : ''}${quantity} (New: ${newStock})`,
+        action: `${adjustmentType} adjustment for ${adjustingItem.name}: ${delta > 0 ? '+' : ''}${delta} (New: ${newStock})`,
         timestamp: new Date().toISOString(),
       });
 
@@ -155,6 +194,8 @@ export const StockManagement = () => {
       setAdjustmentReason('');
       setBusinessSearch('');
       setSelectedBusiness(null);
+      setSelectedSupplier(null);
+      setSupplierSearch('');
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `equipmentTypes/${adjustingItem.id}`);
     }
@@ -435,7 +476,7 @@ export const StockManagement = () => {
                         {move.type === 'IN' ? <ArrowUpCircle className="w-3 h-3" /> : 
                          move.type === 'OUT' ? <ArrowDownCircle className="w-3 h-3" /> : 
                          <RefreshCw className="w-3 h-3" />}
-                        {move.type}
+                        {move.type === 'IN' ? 'Stock In' : move.type === 'OUT' ? 'Stock Out' : 'Adjustment'}
                       </div>
                     </td>
                     <td className="px-8 py-6 text-center">
@@ -443,9 +484,9 @@ export const StockManagement = () => {
                         "text-lg font-black",
                         move.type === 'IN' ? "text-green-600" : 
                         move.type === 'OUT' ? "text-red-600" : 
-                        "text-amber-600"
+                        move.newStock > move.previousStock ? "text-green-600" : "text-red-600"
                       )}>
-                        {move.type === 'OUT' ? '-' : '+'}{move.quantity}
+                        {move.type === 'OUT' || (move.type === 'ADJUSTMENT' && move.newStock < move.previousStock) ? '-' : '+'}{move.quantity}
                       </div>
                     </td>
                     <td className="px-8 py-6 text-center">
@@ -524,7 +565,7 @@ export const StockManagement = () => {
               </div>
             </div>
 
-              <div className="p-8 overflow-y-auto flex-1 space-y-8">
+              <div className="p-8 overflow-y-auto flex-1 space-y-6">
                 {/* Type Selector */}
                 <div className="grid grid-cols-3 gap-3">
                   {[
@@ -534,7 +575,12 @@ export const StockManagement = () => {
                   ].map(type => (
                     <button
                       key={type.id}
-                      onClick={() => setAdjustmentType(type.id as any)}
+                      onClick={() => {
+                        setAdjustmentType(type.id as any);
+                        setAdjustmentReason('');
+                        setSelectedBusiness(null);
+                        setBusinessSearch('');
+                      }}
                       className={cn(
                         "flex flex-col items-center gap-2 p-4 rounded-2xl border-4 transition-all",
                         adjustmentType === type.id 
@@ -548,9 +594,11 @@ export const StockManagement = () => {
                   ))}
                 </div>
 
-                <div className="space-y-8">
-                  <div className="space-y-3">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Quantity</label>
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                      {adjustmentType === 'ADJUSTMENT' ? 'New Total Stock' : 'Quantity'}
+                    </label>
                     <div className="flex items-center gap-6 bg-slate-50 p-3 rounded-2xl border-2 border-slate-50">
                       <button 
                         onClick={() => setAdjustmentValue(v => Math.max(0, v - 1))}
@@ -573,9 +621,10 @@ export const StockManagement = () => {
                     </div>
                   </div>
 
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                      {adjustmentType === 'OUT' ? 'Recipient / Business (Optional)' : 'Reason / Note'}
+                      {adjustmentType === 'OUT' ? 'Recipient / Business (Optional)' : 
+                       adjustmentType === 'IN' ? 'Supplier (Optional)' : 'Reason / Note'}
                     </label>
                     {adjustmentType === 'OUT' ? (
                       <div className="relative">
@@ -621,6 +670,50 @@ export const StockManagement = () => {
                           </div>
                         )}
                       </div>
+                    ) : adjustmentType === 'IN' ? (
+                      <div className="relative">
+                        <div className="flex items-center gap-3 bg-slate-50 p-4 rounded-2xl border-2 border-slate-50 focus-within:border-tillmax-blue transition-all">
+                          <User className="w-5 h-5 text-slate-400" />
+                          <input 
+                            type="text" 
+                            placeholder="Search supplier..."
+                            className="flex-1 bg-transparent font-bold text-slate-700 outline-none"
+                            value={selectedSupplier ? selectedSupplier.name : supplierSearch}
+                            onChange={e => {
+                              setSupplierSearch(e.target.value);
+                              setSelectedSupplier(null);
+                            }}
+                          />
+                          {selectedSupplier && (
+                            <button onClick={() => setSelectedSupplier(null)} className="text-slate-400 hover:text-tillmax-red">
+                              <XCircle className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                        
+                        {showSupplierResults && filteredSuppliers.length > 0 && !selectedSupplier && (
+                          <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-2xl border border-slate-100 z-50 overflow-hidden">
+                            {filteredSuppliers.map(s => (
+                              <button
+                                key={s.id}
+                                onClick={() => {
+                                  setSelectedSupplier(s);
+                                  setShowSupplierResults(false);
+                                }}
+                                className="w-full px-5 py-3 text-left hover:bg-slate-50 flex items-center gap-3 transition-colors"
+                              >
+                                <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-400">
+                                  <User className="w-4 h-4" />
+                                </div>
+                                <div>
+                                  <div className="text-sm font-bold text-slate-900">{s.name}</div>
+                                  <div className="text-[10px] text-slate-400 font-black uppercase tracking-wider">{s.contactNumber}</div>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       <textarea 
                         placeholder="Enter reason for adjustment..."
@@ -631,8 +724,8 @@ export const StockManagement = () => {
                     )}
                   </div>
 
-                  {adjustmentType === 'OUT' && (
-                    <div className="space-y-3">
+                  {(adjustmentType === 'OUT' || adjustmentType === 'IN') && (
+                    <div className="space-y-2">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Final Reason / Note</label>
                       <textarea 
                         placeholder="Enter additional notes..."
@@ -653,9 +746,9 @@ export const StockManagement = () => {
                     <ChevronRight className="w-5 h-5 text-white/20" />
                     <span className={cn(
                       "text-3xl font-black",
-                      (adjustingItem.currentStock + (adjustmentType === 'OUT' ? -adjustmentValue : adjustmentValue)) <= adjustingItem.lowStockThreshold ? "text-amber-400" : "text-green-400"
+                      (adjustmentType === 'ADJUSTMENT' ? adjustmentValue : Math.max(0, adjustingItem.currentStock + (adjustmentType === 'OUT' ? -adjustmentValue : adjustmentValue))) <= adjustingItem.lowStockThreshold ? "text-amber-400" : "text-green-400"
                     )}>
-                      {Math.max(0, adjustingItem.currentStock + (adjustmentType === 'OUT' ? -adjustmentValue : adjustmentValue))}
+                      {adjustmentType === 'ADJUSTMENT' ? adjustmentValue : Math.max(0, adjustingItem.currentStock + (adjustmentType === 'OUT' ? -adjustmentValue : adjustmentValue))}
                     </span>
                   </div>
                 </div>

@@ -16,6 +16,8 @@ import { logout } from '../firebase';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
+import SidebarLink from './SidebarLink';
+
 interface LayoutProps {
   children: React.ReactNode;
 }
@@ -58,25 +60,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
 
           <nav className="space-y-1">
-            {navigation.map((item) => {
-              const isActive = location.pathname === item.href;
-              return (
-                <Link
-                  key={item.name}
-                  to={item.href}
-                  className={cn(
-                    "flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition-all group",
-                    isActive 
-                      ? "bg-tillmax-blue text-white shadow-md shadow-tillmax-blue/20" 
-                      : "text-slate-500 hover:bg-slate-50 hover:text-tillmax-blue"
-                  )}
-                >
-                  <item.icon className={cn("w-5 h-5", isActive ? "text-white" : "text-slate-400 group-hover:text-tillmax-blue")} />
-                  {item.name}
-                  {isActive && <ChevronRight className="w-4 h-4 ml-auto" />}
-                </Link>
-              );
-            })}
+            {navigation.map((item) => (
+              <SidebarLink
+                key={item.name}
+                to={item.href}
+                icon={item.icon}
+                label={item.name}
+                active={location.pathname === item.href}
+              />
+            ))}
           </nav>
         </div>
 
@@ -142,25 +134,16 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               </div>
 
               <nav className="space-y-1">
-                {navigation.map((item) => {
-                  const isActive = location.pathname === item.href;
-                  return (
-                    <Link
-                      key={item.name}
-                      to={item.href}
-                      onClick={() => setIsMobileMenuOpen(false)}
-                      className={cn(
-                        "flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition-all",
-                        isActive 
-                          ? "bg-tillmax-blue text-white shadow-md" 
-                          : "text-slate-500 hover:bg-slate-50"
-                      )}
-                    >
-                      <item.icon className="w-5 h-5" />
-                      {item.name}
-                    </Link>
-                  );
-                })}
+                {navigation.map((item) => (
+                  <SidebarLink
+                    key={item.name}
+                    to={item.href}
+                    icon={item.icon}
+                    label={item.name}
+                    active={location.pathname === item.href}
+                    onClick={() => setIsMobileMenuOpen(false)}
+                  />
+                ))}
               </nav>
 
               <div className="absolute bottom-6 left-6 right-6 pt-6 border-t border-slate-100">
@@ -185,6 +168,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </>
         )}
       </AnimatePresence>
+
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 lg:pt-0 pt-16">

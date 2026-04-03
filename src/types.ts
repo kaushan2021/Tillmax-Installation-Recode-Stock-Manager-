@@ -117,6 +117,8 @@ export interface EmailTemplate {
   name: string;
   subject: string;
   body: string;
+  logo?: string;
+  footerImage?: string;
   createdAt: string;
 }
 

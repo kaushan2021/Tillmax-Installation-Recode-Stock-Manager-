@@ -1,345 +1,299 @@
 import React, { useEffect, useState } from 'react';
 import { 
-  Building2, 
-  Search, 
   Plus, 
-  MoreVertical, 
-  Phone, 
-  Mail, 
+  Search, 
   MapPin, 
-  ChevronRight,
-  X,
-  Check,
-  Trash2,
-  Edit2
+  RefreshCw, 
+  Package, 
+  ChevronRight, 
+  Trash2 
 } from 'lucide-react';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy } from 'firebase/firestore';
-import { db } from '../firebase';
+import { collection, query, where, orderBy, limit, getDocs, startAfter, deleteDoc, doc, addDoc } from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType } from '../firebase';
+import { useAuth } from '../AuthProvider';
 import { Business } from '../types';
 import { formatDate, cn } from '../lib/utils';
+import { useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { toast } from 'sonner';
+import { PageHeader } from './PageHeader';
 
 const BusinessManagement: React.FC = () => {
   const [businesses, setBusinesses] = useState<Business[]>([]);
+  const [search, setSearch] = useState('');
+  const [postcodeSearch, setPostcodeSearch] = useState('');
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingBusiness, setEditingBusiness] = useState<Business | null>(null);
-  const [formData, setFormData] = useState<Partial<Business>>({
-    name: '',
-    ownerName: '',
-    telephone: '',
-    contactNumber: '',
-    email: '',
-    address: '',
-    postcode: ''
-  });
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [lastDoc, setLastDoc] = useState<any>(null);
+  const [hasMore, setHasMore] = useState(true);
+  const navigate = useNavigate();
+  const { isAdmin, profile } = useAuth();
 
-  useEffect(() => {
-    fetchBusinesses();
-  }, []);
+  const PAGE_SIZE = 20;
 
-  const fetchBusinesses = async () => {
-    setLoading(true);
+  const fetchBusinesses = async (isNext = false) => {
+    if (!profile) return;
+    if (isNext) setLoadingMore(true);
+    else setLoading(true);
+
     try {
-      const q = query(collection(db, 'businesses'), orderBy('name', 'asc'));
+      let q;
+      if (search) {
+        const s = search.toLowerCase();
+        q = query(
+          collection(db, 'businesses'),
+          where('name_lowercase', '>=', s),
+          where('name_lowercase', '<=', s + '\uf8ff'),
+          orderBy('name_lowercase'),
+          limit(PAGE_SIZE)
+        );
+      } else if (postcodeSearch) {
+        const s = postcodeSearch.toLowerCase().replace(/\s+/g, '');
+        q = query(
+          collection(db, 'businesses'),
+          where('postcode_normalized', '>=', s),
+          where('postcode_normalized', '<=', s + '\uf8ff'),
+          orderBy('postcode_normalized'),
+          limit(PAGE_SIZE)
+        );
+      } else {
+        q = query(
+          collection(db, 'businesses'),
+          orderBy('createdAt', 'desc'),
+          limit(PAGE_SIZE)
+        );
+      }
+
+      if (isNext && lastDoc) {
+        q = query(q, startAfter(lastDoc));
+      }
+
       const snapshot = await getDocs(q);
-      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Business));
-      setBusinesses(list);
+      const newBusinesses = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as Business));
+      
+      if (isNext) {
+        setBusinesses(prev => [...prev, ...newBusinesses]);
+      } else {
+        setBusinesses(newBusinesses);
+      }
+
+      setLastDoc(snapshot.docs[snapshot.docs.length - 1]);
+      setHasMore(snapshot.docs.length === PAGE_SIZE);
     } catch (error) {
-      console.error('Error fetching businesses', error);
-      toast.error('Failed to load businesses');
+      handleFirestoreError(error, OperationType.GET, 'businesses');
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   };
 
-  const handleOpenModal = (business: Business | null = null) => {
-    if (business) {
-      setEditingBusiness(business);
-      setFormData(business);
-    } else {
-      setEditingBusiness(null);
-      setFormData({
-        name: '',
-        ownerName: '',
-        telephone: '',
-        contactNumber: '',
-        email: '',
-        address: '',
-        postcode: ''
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(() => {
+      fetchBusinesses();
+    }, 800);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [search, postcodeSearch, profile]);
+
+  const [businessToDelete, setBusinessToDelete] = useState<{ id: string, name: string } | null>(null);
+
+  const handleDeleteBusiness = async () => {
+    if (!isAdmin || !businessToDelete) return;
+    try {
+      await deleteDoc(doc(db, 'businesses', businessToDelete.id));
+      await addDoc(collection(db, 'logs'), {
+        userId: profile?.uid,
+        username: profile?.username,
+        action: `deleted business: ${businessToDelete.name}`,
+        timestamp: new Date().toISOString(),
       });
-    }
-    setIsModalOpen(true);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const data = {
-        ...formData,
-        name_lowercase: formData.name?.toLowerCase(),
-        postcode_lowercase: formData.postcode?.toLowerCase(),
-        postcode_normalized: formData.postcode?.replace(/\s+/g, '').toLowerCase(),
-        updatedAt: new Date().toISOString()
-      };
-
-      if (editingBusiness) {
-        await updateDoc(doc(db, 'businesses', editingBusiness.id!), data);
-        toast.success('Business updated successfully');
-      } else {
-        await addDoc(collection(db, 'businesses'), {
-          ...data,
-          createdAt: new Date().toISOString()
-        });
-        toast.success('Business added successfully');
-      }
-      setIsModalOpen(false);
-      fetchBusinesses();
+      setBusinessToDelete(null);
+      fetchBusinesses(); // Refresh list
     } catch (error) {
-      console.error('Error saving business', error);
-      toast.error('Failed to save business');
+      handleFirestoreError(error, OperationType.DELETE, `businesses/${businessToDelete.id}`);
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this business? This will not delete associated installation records.')) return;
-    try {
-      await deleteDoc(doc(db, 'businesses', id));
-      toast.success('Business deleted');
-      fetchBusinesses();
-    } catch (error) {
-      console.error('Error deleting business', error);
-      toast.error('Failed to delete business');
-    }
-  };
-
-  const filteredBusinesses = businesses.filter(b => 
-    b.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    b.postcode.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    b.email.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filtered = businesses.filter(b => {
+    if (!search && !postcodeSearch) return true;
+    const s = search.toLowerCase().replace(/\s+/g, '');
+    const p = postcodeSearch.toLowerCase().replace(/\s+/g, '');
+    const bName = (b.name || '').toLowerCase().replace(/\s+/g, '');
+    const bPostcode = (b.postcode || '').toLowerCase().replace(/\s+/g, '');
+    return (
+      (search && bName.includes(s)) ||
+      (postcodeSearch && bPostcode.includes(p))
+    );
+  });
 
   return (
-    <div className="space-y-8">
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div>
-          <h1 className="text-4xl font-black text-slate-900 tracking-tight mb-2">Businesses</h1>
-          <p className="text-slate-500 font-medium">Manage your client businesses and contact information.</p>
-        </div>
-        <button 
-          onClick={() => handleOpenModal()}
-          className="btn-primary flex items-center gap-2 px-6 py-3 shadow-lg shadow-tillmax-blue/20"
-        >
-          <Plus className="w-5 h-5" />
-          Add Business
-        </button>
-      </header>
+    <div>
+      <PageHeader 
+        title="Businesses" 
+        subtitle="Manage your customer business profiles."
+        action={isAdmin && (
+          <Link to="/businesses/new" className="btn-primary flex items-center gap-2">
+            <Plus className="w-5 h-5" />
+            Add Business
+          </Link>
+        )}
+      />
 
-      <div className="flex flex-col md:flex-row gap-4">
-        <div className="relative flex-1">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+      <div className="flex flex-col md:flex-row gap-4 mb-8">
+        <div className="card p-4 flex-1 flex items-center gap-3 relative">
+          <Search className="w-5 h-5 text-slate-400" />
           <input 
             type="text" 
-            placeholder="Search by name, postcode, or email..." 
-            className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-2xl focus:ring-2 focus:ring-tillmax-blue focus:border-tillmax-blue transition-all outline-none"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search by business name..." 
+            className="flex-1 outline-none text-slate-900"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPostcodeSearch('');
+            }}
           />
+          {loading && search && (
+            <RefreshCw className="w-4 h-4 text-tillmax-blue animate-spin absolute right-4" />
+          )}
+        </div>
+        <div className="card p-4 flex-1 flex items-center gap-3 relative">
+          <MapPin className="w-5 h-5 text-slate-400" />
+          <input 
+            type="text" 
+            placeholder="Search by postcode..." 
+            className="flex-1 outline-none text-slate-900"
+            value={postcodeSearch}
+            onChange={(e) => {
+              setPostcodeSearch(e.target.value);
+              setSearch('');
+            }}
+          />
+          {loading && postcodeSearch && (
+            <RefreshCw className="w-4 h-4 text-tillmax-blue animate-spin absolute right-4" />
+          )}
         </div>
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center h-64">
+      {loading && businesses.length === 0 ? (
+        <div className="flex justify-center p-20">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-tillmax-blue"></div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-          <AnimatePresence mode="popLayout">
-            {filteredBusinesses.map((business, index) => (
-              <motion.div
-                key={business.id}
-                layout
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.9 }}
-                transition={{ delay: index * 0.05 }}
-                className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm hover:shadow-md transition-all group relative overflow-hidden"
-              >
-                <div className="flex items-start justify-between mb-6">
-                  <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center text-tillmax-blue group-hover:bg-tillmax-blue group-hover:text-white transition-all duration-500">
-                    <Building2 className="w-7 h-7" />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button 
-                      onClick={() => handleOpenModal(business)}
-                      className="p-2 text-slate-400 hover:text-tillmax-blue hover:bg-slate-50 rounded-lg transition-all"
-                    >
-                      <Edit2 className="w-4 h-4" />
-                    </button>
-                    <button 
-                      onClick={() => handleDelete(business.id!)}
-                      className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-
-                <h3 className="text-xl font-black text-slate-900 mb-1 group-hover:text-tillmax-blue transition-colors">{business.name}</h3>
-                <p className="text-sm font-bold text-slate-400 mb-6 uppercase tracking-wider">{business.ownerName}</p>
-
-                <div className="space-y-3">
-                  <div className="flex items-center gap-3 text-sm text-slate-600">
-                    <Phone className="w-4 h-4 text-slate-400" />
-                    <span className="font-medium">{business.contactNumber || business.telephone}</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-sm text-slate-600">
-                    <Mail className="w-4 h-4 text-slate-400" />
-                    <span className="font-medium truncate">{business.email}</span>
-                  </div>
-                  <div className="flex items-start gap-3 text-sm text-slate-600">
-                    <MapPin className="w-4 h-4 text-slate-400 mt-0.5" />
-                    <span className="font-medium leading-relaxed">
-                      {business.address}, {business.postcode}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="mt-8 pt-6 border-t border-slate-50 flex items-center justify-between">
-                  <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Added {formatDate(business.createdAt)}</span>
-                  <button className="text-tillmax-blue font-black text-xs uppercase tracking-widest flex items-center gap-1 hover:gap-2 transition-all">
-                    View Details <ChevronRight className="w-3 h-3" />
-                  </button>
-                </div>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-
-          {filteredBusinesses.length === 0 && (
-            <div className="col-span-full py-20 text-center bg-white rounded-3xl border border-dashed border-slate-300">
-              <Building2 className="w-16 h-16 text-slate-200 mx-auto mb-4" />
-              <h3 className="text-xl font-black text-slate-900 mb-2">No businesses found</h3>
-              <p className="text-slate-500 font-medium">Try adjusting your search or add a new business.</p>
+        <div className="card overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100">
+                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Business Name</th>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Postcode</th>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Owner</th>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Telephone</th>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Created</th>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {filtered.map(business => (
+                  <tr 
+                    key={business.id} 
+                    className="hover:bg-slate-50/50 transition-colors group cursor-pointer"
+                    onClick={() => navigate(`/businesses/${business.id}`)}
+                  >
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center text-slate-600 group-hover:bg-tillmax-blue group-hover:text-white transition-colors">
+                          <Package className="w-4 h-4" />
+                        </div>
+                        <span className="font-bold text-slate-900">{business.name}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-slate-600">
+                      {business.postcode}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-slate-600">
+                      {business.ownerName}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-slate-600">
+                      {business.telephone}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-slate-500">
+                      {formatDate(business.createdAt)}
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        {isAdmin && (
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setBusinessToDelete({ id: business.id!, name: business.name });
+                            }}
+                            className="p-2 text-slate-300 hover:text-red-500 transition-colors"
+                            title="Delete Business"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                        <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-tillmax-blue group-hover:translate-x-1 transition-all" />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {filtered.length === 0 && (
+            <div className="py-20 text-center bg-slate-50 border-dashed border-t border-slate-100">
+              <Package className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+              <p className="text-slate-500 font-medium">No businesses found matching your search.</p>
             </div>
           )}
         </div>
       )}
 
-      {/* Modal */}
+      {/* Load More */}
+      {hasMore && !loading && (
+        <div className="mt-12 flex justify-center">
+          <button 
+            onClick={() => fetchBusinesses(true)}
+            disabled={loadingMore}
+            className="px-8 py-3 bg-white border border-slate-200 text-slate-600 font-bold rounded-2xl hover:bg-slate-50 transition-all shadow-sm disabled:opacity-50 flex items-center gap-2"
+          >
+            {loadingMore ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
+            {loadingMore ? 'Loading...' : 'Load More Businesses'}
+          </button>
+        </div>
+      )}
+
+      {/* Delete Business Confirmation Modal */}
       <AnimatePresence>
-        {isModalOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setIsModalOpen(false)}
-              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-2xl bg-white rounded-[32px] shadow-2xl overflow-hidden"
+        {businessToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl"
             >
-              <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                <div>
-                  <h2 className="text-2xl font-black text-slate-900 tracking-tight">
-                    {editingBusiness ? 'Edit Business' : 'Add New Business'}
-                  </h2>
-                  <p className="text-slate-500 text-sm font-medium">Enter the business details below.</p>
-                </div>
+              <div className="w-16 h-16 bg-red-100 rounded-2xl flex items-center justify-center mb-6">
+                <Trash2 className="w-8 h-8 text-red-600" />
+              </div>
+              <h3 className="text-2xl font-bold text-slate-900 mb-2">Delete Business?</h3>
+              <p className="text-slate-600 mb-8">
+                Are you sure you want to delete <span className="font-bold text-slate-900">{businessToDelete.name}</span>? This will NOT delete its installation records, but the business profile will be removed.
+              </p>
+              <div className="flex gap-4">
                 <button 
-                  onClick={() => setIsModalOpen(false)}
-                  className="p-2 hover:bg-white rounded-xl transition-all text-slate-400 hover:text-slate-900"
+                  onClick={() => setBusinessToDelete(null)}
+                  className="flex-1 px-6 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition-colors"
                 >
-                  <X className="w-6 h-6" />
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleDeleteBusiness}
+                  className="flex-1 px-6 py-3 bg-red-600 text-white font-bold rounded-2xl hover:bg-red-700 transition-colors shadow-lg shadow-red-600/20"
+                >
+                  Delete
                 </button>
               </div>
-
-              <form onSubmit={handleSubmit} className="p-8 space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Business Name</label>
-                    <input 
-                      required
-                      type="text" 
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-tillmax-blue outline-none transition-all font-bold"
-                      value={formData.name}
-                      onChange={e => setFormData({...formData, name: e.target.value})}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Owner Name</label>
-                    <input 
-                      required
-                      type="text" 
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-tillmax-blue outline-none transition-all font-bold"
-                      value={formData.ownerName}
-                      onChange={e => setFormData({...formData, ownerName: e.target.value})}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Email Address</label>
-                    <input 
-                      required
-                      type="email" 
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-tillmax-blue outline-none transition-all font-bold"
-                      value={formData.email}
-                      onChange={e => setFormData({...formData, email: e.target.value})}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Contact Number</label>
-                    <input 
-                      required
-                      type="text" 
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-tillmax-blue outline-none transition-all font-bold"
-                      value={formData.contactNumber}
-                      onChange={e => setFormData({...formData, contactNumber: e.target.value})}
-                    />
-                  </div>
-                  <div className="md:col-span-2 space-y-2">
-                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Full Address</label>
-                    <textarea 
-                      required
-                      rows={3}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-tillmax-blue outline-none transition-all font-bold resize-none"
-                      value={formData.address}
-                      onChange={e => setFormData({...formData, address: e.target.value})}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Postcode</label>
-                    <input 
-                      required
-                      type="text" 
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-tillmax-blue outline-none transition-all font-bold"
-                      value={formData.postcode}
-                      onChange={e => setFormData({...formData, postcode: e.target.value})}
-                    />
-                  </div>
-                </div>
-
-                <div className="pt-6 flex items-center justify-end gap-4">
-                  <button 
-                    type="button"
-                    onClick={() => setIsModalOpen(false)}
-                    className="px-6 py-3 text-slate-500 font-bold hover:text-slate-900 transition-all"
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    type="submit"
-                    className="btn-primary px-10 py-3 shadow-lg shadow-tillmax-blue/20 flex items-center gap-2"
-                  >
-                    <Check className="w-5 h-5" />
-                    {editingBusiness ? 'Save Changes' : 'Add Business'}
-                  </button>
-                </div>
-              </form>
             </motion.div>
           </div>
         )}

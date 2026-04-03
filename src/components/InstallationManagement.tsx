@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   ClipboardList, 
   Search, 
@@ -15,22 +16,32 @@ import {
   Package,
   CreditCard,
   User as UserIcon,
-  HardDrive
+  HardDrive,
+  RefreshCw,
+  Building2,
+  Eye
 } from 'lucide-react';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy, where } from 'firebase/firestore';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
-import { InstallationRecord, Business, Equipment } from '../types';
+import { useAuth } from '../AuthProvider';
+import { InstallationRecord, Business, Equipment, SimpleEntity } from '../types';
 import { formatDate, cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 
 const InstallationManagement: React.FC = () => {
+  const navigate = useNavigate();
+  const { isAdmin } = useAuth();
   const [records, setRecords] = useState<InstallationRecord[]>([]);
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<InstallationRecord | null>(null);
+  const [softwareTypes, setSoftwareTypes] = useState<SimpleEntity[]>([]);
+  const [salesPeople, setSalesPeople] = useState<SimpleEntity[]>([]);
+  const [engineers, setEngineers] = useState<SimpleEntity[]>([]);
+  const [equipmentTypes, setEquipmentTypes] = useState<SimpleEntity[]>([]);
   const [formData, setFormData] = useState<Partial<InstallationRecord>>({
     businessId: '',
     supportType: 'Online and telephone support',
@@ -54,6 +65,26 @@ const InstallationManagement: React.FC = () => {
 
   useEffect(() => {
     fetchData();
+
+    const unsubSoftware = onSnapshot(query(collection(db, 'softwareTypes'), orderBy('name')), (snap) => {
+      setSoftwareTypes(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SimpleEntity)));
+    });
+    const unsubSales = onSnapshot(query(collection(db, 'salesPeople'), orderBy('name')), (snap) => {
+      setSalesPeople(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SimpleEntity)));
+    });
+    const unsubEngineers = onSnapshot(query(collection(db, 'engineers'), orderBy('name')), (snap) => {
+      setEngineers(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SimpleEntity)));
+    });
+    const unsubEquipment = onSnapshot(query(collection(db, 'equipmentTypes'), orderBy('name')), (snap) => {
+      setEquipmentTypes(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SimpleEntity)));
+    });
+
+    return () => {
+      unsubSoftware();
+      unsubSales();
+      unsubEngineers();
+      unsubEquipment();
+    };
   }, []);
 
   const fetchData = async () => {
@@ -185,6 +216,38 @@ const InstallationManagement: React.FC = () => {
     setFormData({ ...formData, equipment: newEquipment });
   };
 
+  const addLicenseNumber = () => {
+    setFormData({ ...formData, licenseNumbers: [...(formData.licenseNumbers || []), ''] });
+  };
+
+  const removeLicenseNumber = (index: number) => {
+    const newList = [...(formData.licenseNumbers || [])];
+    newList.splice(index, 1);
+    setFormData({ ...formData, licenseNumbers: newList });
+  };
+
+  const updateLicenseNumber = (index: number, value: string) => {
+    const newList = [...(formData.licenseNumbers || [])];
+    newList[index] = value;
+    setFormData({ ...formData, licenseNumbers: newList });
+  };
+
+  const addTeamViewerId = () => {
+    setFormData({ ...formData, teamViewerIds: [...(formData.teamViewerIds || []), ''] });
+  };
+
+  const removeTeamViewerId = (index: number) => {
+    const newList = [...(formData.teamViewerIds || [])];
+    newList.splice(index, 1);
+    setFormData({ ...formData, teamViewerIds: newList });
+  };
+
+  const updateTeamViewerId = (index: number, value: string) => {
+    const newList = [...(formData.teamViewerIds || [])];
+    newList[index] = value;
+    setFormData({ ...formData, teamViewerIds: newList });
+  };
+
   return (
     <div className="space-y-8">
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
@@ -192,13 +255,6 @@ const InstallationManagement: React.FC = () => {
           <h1 className="text-4xl font-black text-slate-900 tracking-tight mb-2">Installations</h1>
           <p className="text-slate-500 font-medium">Track system setups, support status, and renewals.</p>
         </div>
-        <button 
-          onClick={() => handleOpenModal()}
-          className="btn-primary flex items-center gap-2 px-6 py-3 shadow-lg shadow-tillmax-blue/20"
-        >
-          <Plus className="w-5 h-5" />
-          New Installation
-        </button>
       </header>
 
       <div className="flex flex-col md:flex-row gap-4">
@@ -271,17 +327,20 @@ const InstallationManagement: React.FC = () => {
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2">
                           <button 
-                            onClick={() => handleOpenModal(record)}
+                            onClick={() => navigate(`/records/${record.id}/edit`)}
                             className="p-2 text-slate-400 hover:text-tillmax-blue hover:bg-slate-50 rounded-lg transition-all"
+                            title={isAdmin ? "Edit Record" : "View Record"}
                           >
-                            <Edit2 className="w-4 h-4" />
+                            {isAdmin ? <Edit2 className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                           </button>
-                          <button 
-                            onClick={() => handleDelete(record.id!)}
-                            className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {isAdmin && (
+                            <button 
+                              onClick={() => handleDelete(record.id!)}
+                              className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -433,33 +492,118 @@ const InstallationManagement: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div className="space-y-2">
                       <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Software Type</label>
-                      <input 
+                      <select 
                         required
-                        type="text" 
                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-tillmax-blue outline-none transition-all font-bold"
                         value={formData.softwareType}
                         onChange={e => setFormData({...formData, softwareType: e.target.value})}
-                      />
+                      >
+                        <option value="">Select Software Type</option>
+                        {softwareTypes.map(st => (
+                          <option key={st.id} value={st.name}>{st.name}</option>
+                        ))}
+                      </select>
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Sales Person</label>
-                      <input 
+                      <select 
                         required
-                        type="text" 
                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-tillmax-blue outline-none transition-all font-bold"
                         value={formData.salesPerson}
                         onChange={e => setFormData({...formData, salesPerson: e.target.value})}
-                      />
+                      >
+                        <option value="">Select Sales Person</option>
+                        {salesPeople.map(sp => (
+                          <option key={sp.id} value={sp.name}>{sp.name}</option>
+                        ))}
+                      </select>
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Engineer</label>
-                      <input 
+                      <select 
                         required
-                        type="text" 
                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-tillmax-blue outline-none transition-all font-bold"
                         value={formData.engineer}
                         onChange={e => setFormData({...formData, engineer: e.target.value})}
-                      />
+                      >
+                        <option value="">Select Engineer</option>
+                        {engineers.map(en => (
+                          <option key={en.id} value={en.name}>{en.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-4 col-span-full">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest">License Numbers</label>
+                        <button 
+                          type="button"
+                          onClick={addLicenseNumber}
+                          className="text-tillmax-blue font-black text-[10px] uppercase tracking-widest flex items-center gap-1 hover:bg-blue-50 px-2 py-1 rounded-lg transition-all"
+                        >
+                          <Plus className="w-3 h-3" />
+                          Add License
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {formData.licenseNumbers?.map((ln, idx) => (
+                          <div key={idx} className="flex items-center gap-2">
+                            <input 
+                              type="text" 
+                              placeholder="License Number"
+                              className="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-tillmax-blue outline-none transition-all font-bold text-sm"
+                              value={ln}
+                              onChange={e => updateLicenseNumber(idx, e.target.value)}
+                            />
+                            <button 
+                              type="button"
+                              onClick={() => removeLicenseNumber(idx)}
+                              className="p-2 text-slate-300 hover:text-red-500 transition-all"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                        {(!formData.licenseNumbers || formData.licenseNumbers.length === 0) && (
+                          <p className="text-[10px] text-slate-400 font-bold italic">No license numbers added.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-4 col-span-full">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest">TeamViewer IDs</label>
+                        <button 
+                          type="button"
+                          onClick={addTeamViewerId}
+                          className="text-tillmax-blue font-black text-[10px] uppercase tracking-widest flex items-center gap-1 hover:bg-blue-50 px-2 py-1 rounded-lg transition-all"
+                        >
+                          <Plus className="w-3 h-3" />
+                          Add ID
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {formData.teamViewerIds?.map((tv, idx) => (
+                          <div key={idx} className="flex items-center gap-2">
+                            <input 
+                              type="text" 
+                              placeholder="TeamViewer ID"
+                              className="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-tillmax-blue outline-none transition-all font-bold text-sm"
+                              value={tv}
+                              onChange={e => updateTeamViewerId(idx, e.target.value)}
+                            />
+                            <button 
+                              type="button"
+                              onClick={() => removeTeamViewerId(idx)}
+                              className="p-2 text-slate-300 hover:text-red-500 transition-all"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                        {(!formData.teamViewerIds || formData.teamViewerIds.length === 0) && (
+                          <p className="text-[10px] text-slate-400 font-bold italic">No TeamViewer IDs added.</p>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -485,13 +629,16 @@ const InstallationManagement: React.FC = () => {
                     {formData.equipment?.map((item, index) => (
                       <div key={index} className="flex items-center gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
                         <div className="flex-1">
-                          <input 
-                            type="text" 
-                            placeholder="Item Name"
+                          <select 
                             className="w-full bg-transparent border-none focus:ring-0 font-bold text-slate-900"
                             value={item.name}
                             onChange={e => updateEquipment(index, 'name', e.target.value)}
-                          />
+                          >
+                            <option value="">Select Equipment</option>
+                            {equipmentTypes.map(et => (
+                              <option key={et.id} value={et.name}>{et.name}</option>
+                            ))}
+                          </select>
                         </div>
                         <div className="w-24">
                           <input 

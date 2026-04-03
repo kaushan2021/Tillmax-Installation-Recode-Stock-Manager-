@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { UserProfile } from '../types';
 import { toast } from 'sonner';
+import { auth } from '../firebase';
 
 export function useUserManagement() {
   const [isProcessing, setIsProcessing] = useState(false);
@@ -8,13 +9,24 @@ export function useUserManagement() {
 
   const clearError = () => setError(null);
 
-  const createUser = async (userData: Partial<UserProfile>) => {
+  const getAuthHeader = async () => {
+    const user = auth.currentUser;
+    if (!user) throw new Error('Not authenticated');
+    const token = await user.getIdToken();
+    return { 'Authorization': `Bearer ${token}` };
+  };
+
+  const createUser = async (userData: Partial<UserProfile> & { password?: string }) => {
     setIsProcessing(true);
     setError(null);
     try {
-      const response = await fetch('/api/users/create', {
+      const headers = await getAuthHeader();
+      const response = await fetch('/api/admin/create-user', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...headers
+        },
         body: JSON.stringify(userData),
       });
       if (!response.ok) {
@@ -33,14 +45,17 @@ export function useUserManagement() {
   };
 
   const updateUser = async (data: any) => {
-    const { uid, ...userData } = data;
     setIsProcessing(true);
     setError(null);
     try {
-      const response = await fetch(`/api/users/update/${uid}`, {
+      const headers = await getAuthHeader();
+      const response = await fetch('/api/admin/update-user', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(userData),
+        headers: { 
+          'Content-Type': 'application/json',
+          ...headers
+        },
+        body: JSON.stringify(data),
       });
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
@@ -61,8 +76,14 @@ export function useUserManagement() {
     setIsProcessing(true);
     setError(null);
     try {
-      const response = await fetch(`/api/users/delete/${uid}`, {
-        method: 'DELETE',
+      const headers = await getAuthHeader();
+      const response = await fetch('/api/admin/delete-user', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          ...headers
+        },
+        body: JSON.stringify({ uid }),
       });
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));

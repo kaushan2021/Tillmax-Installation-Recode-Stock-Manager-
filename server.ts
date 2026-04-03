@@ -345,7 +345,7 @@ async function startServer() {
   });
 
   apiRouter.post("/send-renewal-email", async (req, res) => {
-    const { to, subject, html, smtpConfig } = req.body;
+    const { to, subject, html, smtpConfig, attachments } = req.body;
     if (!to || !subject || !html || !smtpConfig) return res.status(400).json({ error: "Missing required fields" });
     try {
       const transporter = nodemailer.createTransport({
@@ -354,7 +354,10 @@ async function startServer() {
       });
       const info = await transporter.sendMail({
         from: `"${smtpConfig.senderName || 'Tillmax Support'}" <${smtpConfig.user}>`,
-        to, subject, html,
+        to, 
+        subject, 
+        html,
+        attachments: attachments || []
       });
       res.json({ success: true, messageId: info.messageId });
     } catch (error: any) {
