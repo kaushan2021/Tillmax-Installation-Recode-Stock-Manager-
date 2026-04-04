@@ -3,7 +3,7 @@ import { Link, Navigate } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType, auth as clientAuth } from '../firebase';
 import { setDoc, collection, query, orderBy, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDoc, serverTimestamp, writeBatch, getDocs, limit, startAfter, getCountFromServer } from 'firebase/firestore';
 import { useAuth } from '../AuthProvider';
-import { UserProfile, SimpleEntity, UserRole, Business, InstallationRecord, EmailTemplate, SystemSetting, Category, Supplier } from '../types';
+import { UserProfile, SimpleEntity, UserRole, Business, InstallationRecord, EmailTemplate, SystemSetting, Category, Supplier, CompanySetting } from '../types';
 import { 
   Users, 
   Shield, 
@@ -38,10 +38,13 @@ import {
   EyeOff,
   Filter,
   MapPin,
-  Tag
+  Tag,
+  Building2,
+  Image
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { motion } from 'motion/react';
+import { toast } from 'sonner';
 import { cn, formatDate, parseDate } from '../lib/utils';
 import { useUserManagement } from '../hooks/useUserManagement';
 import { UserForm } from './admin/UserForm';
@@ -50,7 +53,7 @@ import { ConfirmationModal } from './admin/ConfirmationModal';
 
 export const AdminPanel = () => {
   const { profile, isAdmin } = useAuth();
-  const [activeTab, setActiveTab] = useState<'users' | 'lookups' | 'renewals' | 'templates' | 'settings' | 'maintenance'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'lookups' | 'renewals' | 'templates' | 'settings' | 'maintenance' | 'company'>('users');
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -79,6 +82,7 @@ export const AdminPanel = () => {
     { id: 'renewals', label: 'Renewals', icon: RefreshCw },
     { id: 'templates', label: 'Templates', icon: FileText },
     { id: 'settings', label: 'SMTP Settings', icon: Settings },
+    { id: 'company', label: 'Company Profile', icon: Building2 },
     { id: 'maintenance', label: 'Maintenance', icon: Wrench },
   ];
 
@@ -118,6 +122,7 @@ export const AdminPanel = () => {
       {activeTab === 'renewals' && <RenewalManagement onSwitchTab={setActiveTab} />}
       {activeTab === 'templates' && <TemplateManager />}
       {activeTab === 'settings' && <SmtpSettings />}
+      {activeTab === 'company' && <CompanySettings />}
       {activeTab === 'maintenance' && <MaintenancePanel />}
     </div>
   );
@@ -1287,6 +1292,247 @@ const UserManagement = ({ users, loading }: { users: UserProfile[], loading: boo
           isProcessing={isProcessing}
         />
       )}
+    </div>
+  );
+};
+
+const CompanySettings = () => {
+  const [settings, setSettings] = useState<Partial<CompanySetting>>({
+    name: '',
+    logo: '',
+    address: '',
+    postcode: '',
+    bankName: '',
+    accountName: '',
+    accountNumber: '',
+    sortCode: '',
+    hotline: '',
+    email: ''
+  });
+  const [loading, setLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const { profile } = useAuth();
+
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const docRef = doc(db, 'companySettings', 'profile');
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setSettings(docSnap.data() as CompanySetting);
+        }
+      } catch (error) {
+        handleFirestoreError(error, OperationType.GET, 'companySettings/profile');
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchSettings();
+  }, []);
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 200 * 1024) {
+        toast.error("Logo must be under 200KB");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setSettings({ ...settings, logo: reader.result as string });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSaving(true);
+    try {
+      await setDoc(doc(db, 'companySettings', 'profile'), {
+        ...settings,
+        updatedAt: new Date().toISOString()
+      });
+
+      await addDoc(collection(db, 'logs'), {
+        userId: profile?.uid,
+        username: profile?.username,
+        action: `updated company profile settings`,
+        timestamp: new Date().toISOString(),
+      });
+
+      setSuccessMessage("Company Profile updated successfully!");
+      setTimeout(() => setSuccessMessage(null), 5000);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'companySettings/profile');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  if (loading) return <div className="p-20 text-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-tillmax-blue mx-auto"></div></div>;
+
+  return (
+    <div className="max-w-4xl mx-auto">
+      <div className="card p-8">
+        <h2 className="text-2xl font-bold text-slate-900 mb-2 flex items-center gap-3">
+          <Building2 className="w-7 h-7 text-tillmax-blue" />
+          Company Profile
+        </h2>
+        <p className="text-slate-500 mb-8">Configure your business details for proforma invoices and system identity.</p>
+
+        <form onSubmit={handleSave} className="space-y-8">
+          {successMessage && (
+            <div className="p-4 bg-emerald-50 border border-emerald-100 text-emerald-600 rounded-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
+              <CheckCircle className="w-5 h-5" />
+              <span className="text-sm font-bold">{successMessage}</span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="space-y-6">
+              <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-slate-400" />
+                General Information
+              </h3>
+              
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-slate-700">Business Name</label>
+                <input 
+                  required
+                  type="text" 
+                  className="input-field" 
+                  value={settings.name}
+                  onChange={e => setSettings({...settings, name: e.target.value})}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-slate-700">Logo (Max 200KB)</label>
+                <div className="flex items-center gap-4">
+                  {settings.logo && (
+                    <div className="w-20 h-20 rounded-xl border border-slate-200 overflow-hidden bg-slate-50 flex items-center justify-center p-2">
+                      <img src={settings.logo} alt="Logo" className="max-w-full max-h-full object-contain" />
+                    </div>
+                  )}
+                  <label className="flex-1 cursor-pointer">
+                    <div className="border-2 border-dashed border-slate-200 rounded-xl p-4 hover:border-tillmax-blue transition-all text-center">
+                      <Image className="w-6 h-6 text-slate-400 mx-auto mb-1" />
+                      <span className="text-xs font-bold text-slate-500">Click to upload logo</span>
+                    </div>
+                    <input type="file" className="hidden" accept="image/*" onChange={handleLogoUpload} />
+                  </label>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-slate-700">Full Address</label>
+                <textarea 
+                  required
+                  rows={3}
+                  className="input-field" 
+                  value={settings.address}
+                  onChange={e => setSettings({...settings, address: e.target.value})}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-slate-700">Postcode</label>
+                <input 
+                  required
+                  type="text" 
+                  className="input-field" 
+                  value={settings.postcode}
+                  onChange={e => setSettings({...settings, postcode: e.target.value})}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700">Hotline Number</label>
+                  <input 
+                    type="text" 
+                    className="input-field" 
+                    value={settings.hotline}
+                    onChange={e => setSettings({...settings, hotline: e.target.value})}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700">Support Email</label>
+                  <input 
+                    type="email" 
+                    className="input-field" 
+                    value={settings.email}
+                    onChange={e => setSettings({...settings, email: e.target.value})}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <FileSpreadsheet className="w-5 h-5 text-slate-400" />
+                Bank Details
+              </h3>
+
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-slate-700">Bank Name</label>
+                <input 
+                  type="text" 
+                  className="input-field" 
+                  value={settings.bankName}
+                  onChange={e => setSettings({...settings, bankName: e.target.value})}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-slate-700">Account Name</label>
+                <input 
+                  type="text" 
+                  className="input-field" 
+                  value={settings.accountName}
+                  onChange={e => setSettings({...settings, accountName: e.target.value})}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-slate-700">Account Number</label>
+                <input 
+                  type="text" 
+                  className="input-field" 
+                  value={settings.accountNumber}
+                  onChange={e => setSettings({...settings, accountNumber: e.target.value})}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-slate-700">Sort Code</label>
+                <input 
+                  type="text" 
+                  className="input-field" 
+                  value={settings.sortCode}
+                  onChange={e => setSettings({...settings, sortCode: e.target.value})}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-6 border-t border-slate-100 flex justify-end">
+            <button 
+              disabled={isSaving}
+              className="btn-primary flex items-center gap-2 px-12"
+            >
+              {isSaving ? (
+                <RefreshCw className="w-5 h-5 animate-spin" />
+              ) : (
+                <Save className="w-5 h-5" />
+              )}
+              {isSaving ? "Saving..." : "Save Profile"}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 };

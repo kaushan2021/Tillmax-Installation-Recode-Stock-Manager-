@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, orderBy, onSnapshot, updateDoc, doc, addDoc, limit, getDocs, where } from 'firebase/firestore';
 import { useAuth } from '../AuthProvider';
+import { useNavigate } from 'react-router-dom';
 import { EquipmentType, Category, Supplier, StockMovement, StockMovementType, Business } from '../types';
 import { 
   Search, 
@@ -32,6 +33,7 @@ import { format } from 'date-fns';
 
 export const StockManagement = () => {
   const { profile } = useAuth();
+  const navigate = useNavigate();
   const [items, setItems] = useState<EquipmentType[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -236,9 +238,18 @@ export const StockManagement = () => {
           <p className="text-slate-500 mt-2 font-medium">Real-time inventory tracking and audit trail.</p>
         </div>
 
-        <div className="flex bg-slate-100 p-1 rounded-2xl self-start md:self-center">
+        <div className="flex flex-wrap items-center gap-4">
           <button
-            onClick={() => setActiveTab('inventory')}
+            onClick={() => navigate('/proforma')}
+            className="bg-white border-2 border-slate-100 text-slate-600 hover:border-tillmax-blue hover:text-tillmax-blue px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-widest flex items-center gap-2 transition-all shadow-sm hover:shadow-md"
+          >
+            <Plus className="w-4 h-4" />
+            Generate Proforma Invoice
+          </button>
+
+          <div className="flex bg-slate-100 p-1 rounded-2xl">
+            <button
+              onClick={() => setActiveTab('inventory')}
             className={cn(
               "px-6 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2",
               activeTab === 'inventory' ? "bg-white text-tillmax-blue shadow-sm" : "text-slate-500 hover:text-slate-700"
@@ -259,8 +270,9 @@ export const StockManagement = () => {
           </button>
         </div>
       </div>
+    </div>
 
-      {activeTab === 'inventory' ? (
+    {activeTab === 'inventory' ? (
         <>
           {/* Stats Bento Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">

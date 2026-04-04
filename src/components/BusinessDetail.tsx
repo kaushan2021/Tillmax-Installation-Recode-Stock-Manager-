@@ -29,7 +29,9 @@ import {
   ChevronRight,
   Clock,
   AlertCircle,
-  Eye
+  Eye,
+  Copy,
+  Check
 } from 'lucide-react';
 import { formatDate, cn, parseDate } from '../lib/utils';
 import { toast } from 'sonner';
@@ -84,6 +86,29 @@ export const BusinessDetail: React.FC = () => {
   }
 
   if (!business) return null;
+
+  const ClickToCopy = ({ text, children, label }: { text: string, children: React.ReactNode, label: string }) => {
+    const handleCopy = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(text);
+      toast.success(`${label} copied to clipboard`);
+    };
+
+    return (
+      <div 
+        onClick={handleCopy}
+        className="group/copy cursor-pointer relative -mx-2 px-2 py-1 rounded-lg hover:bg-slate-50 transition-all active:scale-[0.98]"
+        title={`Click to copy ${label}`}
+      >
+        {children}
+        <div className="absolute top-1 right-2 opacity-0 group-hover/copy:opacity-100 transition-opacity pointer-events-none">
+          <span className="text-[10px] font-black text-tillmax-blue bg-blue-50 px-2 py-0.5 rounded uppercase tracking-widest border border-blue-100 shadow-sm">
+            Copy
+          </span>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-8">
@@ -143,11 +168,17 @@ export const BusinessDetail: React.FC = () => {
                 <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center text-slate-400 shrink-0">
                   <Phone className="w-5 h-5" />
                 </div>
-                <div>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Telephone</p>
-                  <p className="font-bold text-slate-900">{business.telephone}</p>
+                <div className="flex-1 min-w-0">
+                  <ClickToCopy text={business.telephone} label="Telephone">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Telephone</p>
+                    <p className="font-bold text-slate-900 break-all">{business.telephone}</p>
+                  </ClickToCopy>
                   {business.contactNumber && (
-                    <p className="text-sm text-slate-500">{business.contactNumber}</p>
+                    <div className="mt-2">
+                      <ClickToCopy text={business.contactNumber} label="Contact Number">
+                        <p className="text-sm text-slate-500 break-all">{business.contactNumber}</p>
+                      </ClickToCopy>
+                    </div>
                   )}
                 </div>
               </div>
@@ -155,19 +186,23 @@ export const BusinessDetail: React.FC = () => {
                 <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center text-slate-400 shrink-0">
                   <Mail className="w-5 h-5" />
                 </div>
-                <div>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Email Address</p>
-                  <p className="font-bold text-slate-900 truncate">{business.email}</p>
+                <div className="flex-1 min-w-0">
+                  <ClickToCopy text={business.email} label="Email">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Email Address</p>
+                    <p className="font-bold text-slate-900 break-all">{business.email}</p>
+                  </ClickToCopy>
                 </div>
               </div>
               <div className="flex items-start gap-4">
                 <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center text-slate-400 shrink-0">
                   <MapPin className="w-5 h-5" />
                 </div>
-                <div>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Address</p>
-                  <p className="font-bold text-slate-900 leading-relaxed">{business.address}</p>
-                  <p className="font-black text-tillmax-blue mt-1">{business.postcode}</p>
+                <div className="flex-1 min-w-0">
+                  <ClickToCopy text={`${business.address}, ${business.postcode}`} label="Address">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Address</p>
+                    <p className="font-bold text-slate-900 leading-relaxed break-words">{business.address}</p>
+                    <p className="font-black text-tillmax-blue mt-1">{business.postcode}</p>
+                  </ClickToCopy>
                 </div>
               </div>
             </div>

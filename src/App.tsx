@@ -65,6 +65,7 @@ import {
 import { signOut } from 'firebase/auth';
 import { db, auth, handleFirestoreError, OperationType } from './firebase';
 import { AuthProvider, useAuth } from './AuthProvider';
+import { CompanyProvider, useCompany } from './CompanyProvider';
 import { Business, InstallationRecord, UserProfile, LogEntry, SimpleEntity, UserRole } from './types';
 import { addYears, isAfter, addMonths, startOfMonth, endOfMonth, format } from 'date-fns';
 import { cn, formatDate, parseDate, formatDateTime } from './lib/utils';
@@ -76,6 +77,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { InstallationEdit } from './components/InstallationEdit';
 import { BusinessDetail } from './components/BusinessDetail';
 import { BusinessEdit } from './components/BusinessEdit';
+import { ProformaInvoice } from './components/ProformaInvoice';
 
 // --- Components ---
 
@@ -99,41 +101,58 @@ const LoadingScreen = ({ message = "Authenticating..." }: { message?: string }) 
   </div>
 );
 
-const Logo = ({ className }: { className?: string }) => (
-  <div className={cn("flex items-center", className)}>
-    <svg viewBox="0 0 460 120" fill="none" xmlns="http://www.w3.org/2000/svg" className="h-12 w-auto overflow-visible">
-      {/* 3x3 Grid of Squares */}
-      <rect x="10" y="20" width="22" height="22" rx="4" fill="#E31E24" />
-      <rect x="42" y="20" width="22" height="22" rx="4" fill="#E31E24" />
-      <rect x="74" y="20" width="22" height="22" rx="4" fill="#E31E24" />
-      
-      <rect x="10" y="52" width="22" height="22" rx="4" fill="#2E3192" />
-      <rect x="42" y="52" width="22" height="22" rx="4" fill="#E31E24" />
-      <rect x="74" y="52" width="22" height="22" rx="4" fill="#2E3192" />
-      
-      <rect x="10" y="84" width="22" height="22" rx="4" fill="#2E3192" />
-      <rect x="42" y="84" width="22" height="22" rx="4" fill="#2E3192" />
-      <rect x="74" y="84" width="22" height="22" rx="4" fill="#2E3192" />
+const Logo = ({ className }: { className?: string }) => {
+  const { settings } = useCompany();
 
-      {/* TILLMAX LTD Text */}
-      <text x="110" y="75" fontFamily="Arial, sans-serif" fontSize="68" fontWeight="900" letterSpacing="-2">
-        <tspan fill="#2E3192">TILL</tspan>
-        <tspan fill="#E31E24">MAX</tspan>
-        <tspan fill="#2E3192" fontSize="32" dx="8" dy="-20">LTD</tspan>
-      </text>
+  if (settings?.logo) {
+    return (
+      <div className={cn("flex items-center", className)}>
+        <img 
+          src={settings.logo} 
+          alt={settings.name} 
+          className="h-12 w-auto object-contain max-w-[200px]" 
+          referrerPolicy="no-referrer" 
+        />
+      </div>
+    );
+  }
 
-      {/* Subtitle with lines */}
-      <line x1="110" y1="95" x2="145" y2="95" stroke="#E31E24" strokeWidth="1" />
-      <text x="155" y="100" fontFamily="Arial, sans-serif" fontSize="20" fill="#333" letterSpacing="2">
-        Quality Comes First
-      </text>
-      <line x1="345" y1="95" x2="380" y2="95" stroke="#E31E24" strokeWidth="1" />
-      
-      {/* Registered Trademark Symbol */}
-      <text x="410" y="25" fontFamily="Arial, sans-serif" fontSize="14" fill="#E31E24">®</text>
-    </svg>
-  </div>
-);
+  return (
+    <div className={cn("flex items-center", className)}>
+      <svg viewBox="0 0 460 120" fill="none" xmlns="http://www.w3.org/2000/svg" className="h-12 w-auto overflow-visible">
+        {/* 3x3 Grid of Squares */}
+        <rect x="10" y="20" width="22" height="22" rx="4" fill="#E31E24" />
+        <rect x="42" y="20" width="22" height="22" rx="4" fill="#E31E24" />
+        <rect x="74" y="20" width="22" height="22" rx="4" fill="#E31E24" />
+        
+        <rect x="10" y="52" width="22" height="22" rx="4" fill="#2E3192" />
+        <rect x="42" y="52" width="22" height="22" rx="4" fill="#E31E24" />
+        <rect x="74" y="52" width="22" height="22" rx="4" fill="#2E3192" />
+        
+        <rect x="10" y="84" width="22" height="22" rx="4" fill="#2E3192" />
+        <rect x="42" y="84" width="22" height="22" rx="4" fill="#2E3192" />
+        <rect x="74" y="84" width="22" height="22" rx="4" fill="#2E3192" />
+
+        {/* TILLMAX LTD Text */}
+        <text x="110" y="75" fontFamily="Arial, sans-serif" fontSize="68" fontWeight="900" letterSpacing="-2">
+          <tspan fill="#2E3192">TILL</tspan>
+          <tspan fill="#E31E24">MAX</tspan>
+          <tspan fill="#2E3192" fontSize="32" dx="8" dy="-20">LTD</tspan>
+        </text>
+
+        {/* Subtitle with lines */}
+        <line x1="110" y1="95" x2="145" y2="95" stroke="#E31E24" strokeWidth="1" />
+        <text x="155" y="100" fontFamily="Arial, sans-serif" fontSize="20" fill="#333" letterSpacing="2">
+          Quality Comes First
+        </text>
+        <line x1="345" y1="95" x2="380" y2="95" stroke="#E31E24" strokeWidth="1" />
+        
+        {/* Registered Trademark Symbol */}
+        <text x="410" y="25" fontFamily="Arial, sans-serif" fontSize="14" fill="#E31E24">®</text>
+      </svg>
+    </div>
+  );
+};
 
 const SidebarLink: React.FC<{ to: string, icon: any, label: string, active?: boolean }> = ({ to, icon: Icon, label, active }) => (
   <Link 
@@ -347,6 +366,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
     { to: '/records', icon: FileText, label: 'Installation Records' },
     { to: '/businesses', icon: Package, label: 'Businesses' },
     { to: '/stock', icon: Database, label: 'Stock Management' },
+    { to: '/proforma', icon: CreditCard, label: 'Proforma Invoice' },
   ];
 
   if (profile?.role === 'ADMIN') {
@@ -1471,9 +1491,11 @@ export default function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <Router>
-          <AppRoutes />
-        </Router>
+        <CompanyProvider>
+          <Router>
+            <AppRoutes />
+          </Router>
+        </CompanyProvider>
       </AuthProvider>
     </ErrorBoundary>
   );
@@ -1504,6 +1526,7 @@ function AppRoutes() {
           element={isAdmin ? <AdminPanel /> : <Navigate to="/" replace />} 
         />
         <Route path="/stock" element={<StockManagement />} />
+        <Route path="/proforma" element={<ProformaInvoice />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </Layout>

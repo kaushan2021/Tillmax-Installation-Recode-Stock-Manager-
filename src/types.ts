@@ -129,3 +129,45 @@ export interface SystemSetting {
   senderName: string;
   updatedAt: string;
 }
+
+export interface CompanySetting {
+  id?: string;
+  name: string;
+  logo: string;
+  address: string;
+  postcode: string;
+  bankName: string;
+  accountName: string;
+  accountNumber: string;
+  sortCode: string;
+  hotline: string;
+  email: string;
+  updatedAt: string;
+}
+
+export interface InvoiceItem {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  amount: number;
+}
+
+export interface ProformaInvoice {
+  id?: string;
+  invoiceNumber: string;
+  date: string;
+  validUntil: string;
+  businessId?: string;
+  customerName: string;
+  customerAddress: string;
+  customerPostcode: string;
+  customerEmail: string;
+  items: InvoiceItem[];
+  subtotal: number;
+  vatAmount: number;
+  total: number;
+  customMessage: string;
+  createdBy: string;
+  createdByName: string;
+  createdAt: string;
+}

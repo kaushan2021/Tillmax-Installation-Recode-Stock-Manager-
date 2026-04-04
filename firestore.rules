@@ -171,5 +171,16 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow write: if isAdmin();
     }
+
+    match /companySettings/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /proformaInvoices/{id} {
+      allow read: if isAuthenticated();
+      allow create: if isEmployee();
+      allow update, delete: if isAdmin();
+    }
   }
 }
