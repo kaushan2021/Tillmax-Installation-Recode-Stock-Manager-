@@ -10,7 +10,9 @@ import {
   orderBy,
   onSnapshot,
   serverTimestamp,
-  getDocs
+  getDocs,
+  where,
+  limit
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { useAuth } from '../AuthProvider';
@@ -62,11 +64,11 @@ export const InstallationEdit: React.FC = () => {
   const [salesPeople, setSalesPeople] = useState<SimpleEntity[]>([]);
   const [engineers, setEngineers] = useState<SimpleEntity[]>([]);
   const [equipmentTypes, setEquipmentTypes] = useState<SimpleEntity[]>([]);
+  const [businessSearch, setBusinessSearch] = useState('');
+  const [isSearchingBusinesses, setIsSearchingBusinesses] = useState(false);
+  const [showBusinessResults, setShowBusinessResults] = useState(false);
 
   useEffect(() => {
-    const unsubBusinesses = onSnapshot(query(collection(db, 'businesses'), orderBy('name')), (snap) => {
-      setBusinesses(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Business)));
-    });
     const unsubSoftware = onSnapshot(query(collection(db, 'softwareTypes'), orderBy('name')), (snap) => {
       setSoftwareTypes(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as SimpleEntity)));
     });
@@ -81,13 +83,43 @@ export const InstallationEdit: React.FC = () => {
     });
 
     return () => {
-      unsubBusinesses();
       unsubSoftware();
       unsubSales();
       unsubEngineers();
       unsubEquipment();
     };
   }, []);
+
+  // Server-side business search
+  useEffect(() => {
+    if (businessSearch.length < 2) {
+      setBusinesses([]);
+      setShowBusinessResults(false);
+      return;
+    }
+
+    const delayDebounceFn = setTimeout(async () => {
+      setIsSearchingBusinesses(true);
+      try {
+        const s = businessSearch.toLowerCase();
+        const q = query(
+          collection(db, 'businesses'),
+          where('name_lowercase', '>=', s),
+          where('name_lowercase', '<=', s + '\uf8ff'),
+          limit(10)
+        );
+        const snap = await getDocs(q);
+        setBusinesses(snap.docs.map(d => ({ id: d.id, ...d.data() } as Business)));
+        setShowBusinessResults(true);
+      } catch (error) {
+        console.error("Error searching businesses:", error);
+      } finally {
+        setIsSearchingBusinesses(false);
+      }
+    }, 500);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [businessSearch]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -378,15 +410,58 @@ export const InstallationEdit: React.FC = () => {
               <div className="space-y-2">
                 <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Business Name</label>
                 {id === 'new' ? (
-                  <SearchableSelect 
-                    value={record.businessName || ''}
-                    options={businesses}
-                    onChange={val => {
-                      const b = businesses.find(bus => bus.name === val);
-                      setRecord({...record, businessId: b?.id, businessName: b?.name, postcode: b?.postcode});
-                    }}
-                    placeholder="Select Business"
-                  />
+                  <div className="relative">
+                    <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus-within:ring-2 focus-within:ring-tillmax-blue transition-all">
+                      <Search className="w-5 h-5 text-slate-400 mr-3" />
+                      <input 
+                        type="text" 
+                        placeholder="Search business by name..."
+                        className="flex-1 bg-transparent outline-none font-bold text-slate-900"
+                        value={record.businessName || businessSearch}
+                        onChange={(e) => {
+                          setBusinessSearch(e.target.value);
+                          if (record.businessId) {
+                            setRecord({ ...record, businessId: undefined, businessName: undefined, postcode: undefined });
+                          }
+                        }}
+                        onFocus={() => setShowBusinessResults(true)}
+                      />
+                      {isSearchingBusinesses && <RefreshCw className="w-4 h-4 text-tillmax-blue animate-spin" />}
+                    </div>
+
+                    <AnimatePresence>
+                      {showBusinessResults && (businessSearch.length >= 2 || businesses.length > 0) && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: -10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -10 }}
+                          className="absolute z-50 top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden max-h-60 overflow-y-auto"
+                        >
+                          {isSearchingBusinesses ? (
+                            <div className="p-4 text-center text-slate-400 text-xs font-bold">Searching...</div>
+                          ) : businesses.length > 0 ? (
+                            businesses.map(b => (
+                              <button
+                                key={b.id}
+                                type="button"
+                                onClick={() => {
+                                  setRecord({ ...record, businessId: b.id, businessName: b.name, postcode: b.postcode });
+                                  setBusinessSearch(b.name);
+                                  setShowBusinessResults(false);
+                                }}
+                                className="w-full p-4 text-left hover:bg-slate-50 transition-colors border-b border-slate-50 last:border-0"
+                              >
+                                <p className="font-bold text-slate-900">{b.name}</p>
+                                <p className="text-[10px] text-slate-500 uppercase tracking-wider">{b.postcode}</p>
+                              </button>
+                            ))
+                          ) : businessSearch.length >= 2 && (
+                            <div className="p-4 text-center text-slate-400 text-xs font-bold">No businesses found</div>
+                          )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 ) : (
                   <input 
                     disabled

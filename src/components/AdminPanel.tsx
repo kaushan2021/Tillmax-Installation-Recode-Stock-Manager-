@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { db, handleFirestoreError, OperationType, auth as clientAuth } from '../firebase';
 import { setDoc, collection, query, orderBy, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDoc, serverTimestamp, writeBatch, getDocs, limit, startAfter, getCountFromServer } from 'firebase/firestore';
 import { useAuth } from '../AuthProvider';
-import { UserProfile, SimpleEntity, UserRole, Business, InstallationRecord, EmailTemplate, SystemSetting, Category, Supplier, CompanySetting } from '../types';
+import { UserProfile, SimpleEntity, UserRole, Business, InstallationRecord, EmailTemplate, SystemSetting, Category, Supplier, CompanySetting, LogEntry } from '../types';
 import { 
   Users, 
   Shield, 
@@ -53,9 +53,24 @@ import { ConfirmationModal } from './admin/ConfirmationModal';
 
 export const AdminPanel = () => {
   const { profile, isAdmin } = useAuth();
-  const [activeTab, setActiveTab] = useState<'users' | 'lookups' | 'renewals' | 'templates' | 'settings' | 'maintenance' | 'company'>('users');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialTab = searchParams.get('tab') as any || 'users';
+  const [activeTab, setActiveTab] = useState<'users' | 'lookups' | 'renewals' | 'templates' | 'settings' | 'maintenance' | 'company' | 'logs'>(initialTab);
   const [users, setUsers] = useState<UserProfile[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab && tab !== activeTab) {
+      setActiveTab(tab as any);
+    }
+  }, [searchParams]);
+
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab as any);
+    setSearchParams({ tab });
+  };
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -72,6 +87,17 @@ export const AdminPanel = () => {
     return () => unsubscribe();
   }, [isAdmin]);
 
+  useEffect(() => {
+    if (!isAdmin || activeTab !== 'logs') return;
+    const q = query(collection(db, 'logs'), orderBy('timestamp', 'desc'), limit(100));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LogEntry)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'logs');
+    });
+    return () => unsubscribe();
+  }, [isAdmin, activeTab]);
+
   if (!isAdmin) {
     return <Navigate to="/" replace />;
   }
@@ -80,6 +106,7 @@ export const AdminPanel = () => {
     { id: 'users', label: 'Users', icon: Users },
     { id: 'lookups', label: 'Lookup Tables', icon: Package },
     { id: 'renewals', label: 'Renewals', icon: RefreshCw },
+    { id: 'logs', label: 'Activity Logs', icon: History },
     { id: 'templates', label: 'Templates', icon: FileText },
     { id: 'settings', label: 'SMTP Settings', icon: Settings },
     { id: 'company', label: 'Company Profile', icon: Building2 },
@@ -104,7 +131,7 @@ export const AdminPanel = () => {
             <button 
               key={tab.id}
               data-tab={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
+              onClick={() => handleTabChange(tab.id)}
               className={clsx(
                 "px-4 py-2 rounded-lg font-bold text-sm transition-all flex items-center gap-2",
                 activeTab === tab.id ? "bg-tillmax-blue text-white shadow-md" : "text-slate-500 hover:text-tillmax-blue"
@@ -117,13 +144,72 @@ export const AdminPanel = () => {
         </div>
       </div>
 
+      {activeTab === 'logs' && <LogsManagement logs={logs} />}
       {activeTab === 'users' && <UserManagement users={users} loading={loading} />}
       {activeTab === 'lookups' && <LookupManagement />}
-      {activeTab === 'renewals' && <RenewalManagement onSwitchTab={setActiveTab} />}
+      {activeTab === 'renewals' && <RenewalManagement onSwitchTab={handleTabChange} />}
       {activeTab === 'templates' && <TemplateManager />}
       {activeTab === 'settings' && <SmtpSettings />}
       {activeTab === 'company' && <CompanySettings />}
       {activeTab === 'maintenance' && <MaintenancePanel />}
+    </div>
+  );
+};
+
+const LogsManagement = ({ logs }: { logs: LogEntry[] }) => {
+  return (
+    <div className="card border-none shadow-xl shadow-slate-200/50 overflow-hidden">
+      <div className="px-8 py-6 border-b border-slate-50 bg-slate-50/30 flex items-center justify-between">
+        <h3 className="font-black text-slate-900 flex items-center gap-3 uppercase tracking-wider text-sm">
+          <History className="w-5 h-5 text-tillmax-blue" />
+          System Activity Logs
+        </h3>
+        <span className="text-[10px] font-black bg-tillmax-blue/10 text-tillmax-blue px-3 py-1 rounded-full uppercase tracking-widest">
+          Last 100 entries
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-slate-50/50">
+              <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">User</th>
+              <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Action</th>
+              <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Timestamp</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50">
+            {logs.length === 0 ? (
+              <tr>
+                <td colSpan={3} className="px-8 py-12 text-center text-slate-400 font-medium italic">
+                  No logs found in the system.
+                </td>
+              </tr>
+            ) : (
+              logs.map((log) => (
+                <tr key={log.id} className="hover:bg-slate-50/50 transition-colors group">
+                  <td className="px-8 py-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center text-slate-600 font-black text-[10px] group-hover:bg-tillmax-blue group-hover:text-white transition-colors">
+                        {log.username?.[0]?.toUpperCase() || '?'}
+                      </div>
+                      <span className="text-sm font-bold text-slate-900">{log.username}</span>
+                    </div>
+                  </td>
+                  <td className="px-8 py-4">
+                    <span className="text-sm text-slate-600 font-medium">{log.action}</span>
+                  </td>
+                  <td className="px-8 py-4">
+                    <div className="flex items-center gap-2 text-slate-400">
+                      <Clock className="w-3.5 h-3.5" />
+                      <span className="text-xs font-bold">{log.timestamp ? new Date(log.timestamp).toLocaleString() : 'N/A'}</span>
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 };
@@ -1627,29 +1713,17 @@ const MaintenancePanel = () => {
 
   const exportRecordsToCSV = async () => {
     setIsBackingUp(true);
-    setBackupStatus("Fetching records...");
+    setBackupStatus("Initializing export...");
     try {
-      const q = query(collection(db, 'installationRecords'));
-      const snapshot = await getDocs(q);
+      // Use getCountFromServer for accurate progress
+      const countSnapshot = await getCountFromServer(collection(db, 'installationRecords'));
+      const totalCount = countSnapshot.data().count;
       
-      if (snapshot.empty) {
+      if (totalCount === 0) {
         setBackupStatus("No records found to export.");
         setIsBackingUp(false);
         return;
       }
-
-      setBackupStatus(`Processing ${snapshot.docs.length} records...`);
-      
-      const records = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as InstallationRecord));
-      
-      // Sort by business name
-      records.sort((a, b) => {
-        const nameA = (a.businessName || '').toLowerCase();
-        const nameB = (b.businessName || '').toLowerCase();
-        if (nameA < nameB) return -1;
-        if (nameA > nameB) return 1;
-        return 0;
-      });
 
       // CSV Header
       const headers = [
@@ -1674,31 +1748,56 @@ const MaintenancePanel = () => {
       ];
 
       const csvRows = [headers.join(',')];
+      let lastVisible = null;
+      let processedCount = 0;
+      const BATCH_SIZE = 1000;
 
-      for (const r of records) {
-        const row = [
-          `"${(r.businessName || '').replace(/"/g, '""')}"`,
-          `"${(r.invoiceNumber || '').replace(/"/g, '""')}"`,
-          `"${r.installationDate || ''}"`,
-          `"${(r.supportType || '').replace(/"/g, '""')}"`,
-          `"${(r.supportStatus || '').replace(/"/g, '""')}"`,
-          `"${r.supportStartDate || ''}"`,
-          `"${r.supportEndDate || ''}"`,
-          `"${(r.softwareType || '').replace(/"/g, '""')}"`,
-          r.paymentAmount || 0,
-          `"${r.vatStatus || ''}"`,
-          `"${r.paymentStatus || ''}"`,
-          r.paymentDueAmount || 0,
-          `"${(r.salesPerson || '').replace(/"/g, '""')}"`,
-          `"${(r.engineer || '').replace(/"/g, '""')}"`,
-          `"${(r.licenseNumbers || []).join('; ').replace(/"/g, '""')}"`,
-          `"${(r.teamViewerIds || []).join('; ').replace(/"/g, '""')}"`,
-          `"${(r.comments || '').replace(/"/g, '""')}"`,
-          `"${r.createdAt || ''}"`
-        ];
-        csvRows.push(row.join(','));
+      while (processedCount < totalCount) {
+        setBackupStatus(`Exporting: ${processedCount} / ${totalCount} records...`);
+        
+        let q = query(
+          collection(db, 'installationRecords'), 
+          orderBy('businessName_lowercase'), 
+          limit(BATCH_SIZE)
+        );
+        
+        if (lastVisible) {
+          q = query(q, startAfter(lastVisible));
+        }
+
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) break;
+
+        snapshot.docs.forEach(docSnap => {
+          const r = { id: docSnap.id, ...docSnap.data() } as InstallationRecord;
+          const row = [
+            `"${(r.businessName || '').replace(/"/g, '""')}"`,
+            `"${(r.invoiceNumber || '').replace(/"/g, '""')}"`,
+            `"${r.installationDate || ''}"`,
+            `"${(r.supportType || '').replace(/"/g, '""')}"`,
+            `"${(r.supportStatus || '').replace(/"/g, '""')}"`,
+            `"${r.supportStartDate || ''}"`,
+            `"${r.supportEndDate || ''}"`,
+            `"${(r.softwareType || '').replace(/"/g, '""')}"`,
+            r.paymentAmount || 0,
+            `"${r.vatStatus || ''}"`,
+            `"${r.paymentStatus || ''}"`,
+            r.paymentDueAmount || 0,
+            `"${(r.salesPerson || '').replace(/"/g, '""')}"`,
+            `"${(r.engineer || '').replace(/"/g, '""')}"`,
+            `"${(r.licenseNumbers || []).join('; ').replace(/"/g, '""')}"`,
+            `"${(r.teamViewerIds || []).join('; ').replace(/"/g, '""')}"`,
+            `"${(r.comments || '').replace(/"/g, '""')}"`,
+            `"${r.createdAt || ''}"`
+          ];
+          csvRows.push(row.join(','));
+        });
+
+        processedCount += snapshot.docs.length;
+        lastVisible = snapshot.docs[snapshot.docs.length - 1];
       }
 
+      setBackupStatus("Generating file...");
       const csvString = csvRows.join('\n');
       const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
@@ -1713,11 +1812,11 @@ const MaintenancePanel = () => {
       await addDoc(collection(db, 'logs'), {
         userId: profile?.uid,
         username: profile?.username,
-        action: `exported ${records.length} records to CSV`,
+        action: `exported ${processedCount} records to CSV`,
         timestamp: new Date().toISOString(),
       });
 
-      setBackupStatus(`SUCCESS: Exported ${records.length} records.`);
+      setBackupStatus(`SUCCESS: Exported ${processedCount} records.`);
       setTimeout(() => setBackupStatus(null), 5000);
     } catch (error) {
       console.error("CSV Export failed:", error);

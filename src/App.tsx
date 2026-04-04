@@ -39,7 +39,10 @@ import {
   Filter,
   RefreshCw,
   MessageSquare,
-  TrendingUp
+  TrendingUp,
+  Info,
+  Cpu,
+  User
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -460,6 +463,7 @@ const Dashboard = () => {
     expiredSupport: 0,
     monthlyRecords: 0
   });
+  const [showAppInfo, setShowAppInfo] = useState(false);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -556,7 +560,7 @@ const Dashboard = () => {
     { label: 'New Installation', icon: Plus, to: '/records/new', color: 'bg-tillmax-blue' },
     { label: 'Add Business', icon: UserPlus, to: '/businesses/new', color: 'bg-emerald-500' },
     { label: 'Check Stock', icon: Database, to: '/stock', color: 'bg-amber-500' },
-    { label: 'System Logs', icon: History, to: '/admin', color: 'bg-slate-700' },
+    { label: 'System Logs', icon: History, to: '/admin?tab=logs', color: 'bg-slate-700' },
   ];
 
   return (
@@ -614,17 +618,24 @@ const Dashboard = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
         <div className="lg:col-span-2 space-y-8">
-          <motion.div variants={itemVariants} className="card border-none shadow-xl shadow-slate-200/50">
-            <div className="px-8 py-6 border-b border-slate-50 flex items-center justify-between bg-slate-50/30">
-              <h3 className="font-black text-slate-900 flex items-center gap-3 uppercase tracking-wider text-sm">
-                <div className="w-8 h-8 bg-tillmax-blue/10 rounded-lg flex items-center justify-center">
-                  <History className="w-4 h-4 text-tillmax-blue" />
+          <motion.div variants={itemVariants} className="card border-none shadow-2xl shadow-slate-200/60 overflow-hidden relative">
+            <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-tillmax-blue via-tillmax-red to-tillmax-blue" />
+            
+            <div className="px-8 py-6 border-b border-slate-50 flex items-center justify-between bg-white">
+              <h3 className="font-black text-slate-900 flex items-center gap-3 uppercase tracking-[0.15em] text-xs">
+                <div className="w-10 h-10 bg-tillmax-blue rounded-xl flex items-center justify-center shadow-lg shadow-tillmax-blue/20">
+                  <History className="w-5 h-5 text-white" />
                 </div>
-                Recent Activity Logs
+                Recent Activity
               </h3>
-              <button className="text-xs font-bold text-tillmax-blue hover:underline">View All Logs</button>
+              <button 
+                onClick={() => navigate('/admin?tab=logs')}
+                className="text-[10px] font-black text-tillmax-red uppercase tracking-widest hover:text-tillmax-blue transition-colors px-4 py-2 bg-slate-50 rounded-full"
+              >
+                View All Logs
+              </button>
             </div>
-            <div className="divide-y divide-slate-50">
+            <div className="p-2">
               {logs.length === 0 ? (
                 <div className="p-16 text-center">
                   <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -633,36 +644,35 @@ const Dashboard = () => {
                   <p className="text-slate-400 font-medium">No recent activity found</p>
                 </div>
               ) : (
-                logs.map((log, idx) => (
-                  <motion.div 
-                    key={log.id} 
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: idx * 0.05 }}
-                    className="px-8 py-5 flex items-center justify-between hover:bg-slate-50/80 transition-colors group"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="relative">
-                        <div className="w-10 h-10 bg-white border-2 border-slate-100 rounded-xl flex items-center justify-center text-slate-600 font-black text-xs shadow-sm group-hover:border-tillmax-blue group-hover:text-tillmax-blue transition-all">
-                          {log.username?.[0]?.toUpperCase()}
-                        </div>
-                        <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-emerald-500 border-2 border-white rounded-full"></div>
+                <div className="space-y-1">
+                  {logs.map((log, idx) => (
+                    <motion.div
+                      key={log.id}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: idx * 0.03 }}
+                      className="p-4 flex items-center gap-4 rounded-2xl bg-white border border-transparent"
+                    >
+                      <div className={cn(
+                        "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm font-black text-xs",
+                        idx % 2 === 0 ? "bg-tillmax-blue/5 text-tillmax-blue" : "bg-tillmax-red/5 text-tillmax-red"
+                      )}>
+                        {log.username?.[0]?.toUpperCase()}
                       </div>
-                      <div>
-                        <p className="text-sm font-medium text-slate-600 leading-relaxed">
-                          <span className="font-black text-slate-900">{log.username}</span> {log.action}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-slate-900 leading-tight">
+                          {log.username} <span className="font-medium text-slate-500">{log.action}</span>
                         </p>
                         <div className="flex items-center gap-2 mt-1">
                           <Clock className="w-3 h-3 text-slate-300" />
-                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                             {log.timestamp ? formatDateTime(log.timestamp) : 'Just now'}
                           </p>
                         </div>
                       </div>
-                    </div>
-                    <ChevronRight className="w-4 h-4 text-slate-300 opacity-0 group-hover:opacity-100 transition-all -translate-x-2 group-hover:translate-x-0" />
-                  </motion.div>
-                ))
+                    </motion.div>
+                  ))}
+                </div>
               )}
             </div>
           </motion.div>
@@ -676,7 +686,7 @@ const Dashboard = () => {
                   <Calendar className="w-7 h-7 text-tillmax-red animate-pulse" />
                 </div>
                 <div className="text-right">
-                  <p className="text-4xl font-black tracking-tighter text-tillmax-red drop-shadow-[0_0_10px_rgba(238,28,37,0.3)]">{format(currentTime, 'HH:mm:ss')}</p>
+                  <p className="text-4xl font-black tracking-tighter text-tillmax-red drop-shadow-[0_0_10px_rgba(238,28,37,0.3)]">{format(currentTime, 'hh:mm a')}</p>
                   <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mt-1">{format(currentTime, 'EEEE, MMMM do')}</p>
                 </div>
               </div>
@@ -738,8 +748,100 @@ const Dashboard = () => {
             </div>
             <Logo className="absolute -bottom-8 -right-8 w-48 h-48 opacity-10 -rotate-12 pointer-events-none" />
           </motion.div>
+
+          <motion.div 
+            variants={itemVariants}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => setShowAppInfo(true)}
+            className="card p-6 bg-white border border-slate-100 cursor-pointer hover:shadow-lg transition-all group relative overflow-hidden"
+          >
+            <div className="flex items-center gap-4 relative z-10">
+              <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 group-hover:bg-tillmax-blue group-hover:text-white transition-colors">
+                <Info className="w-6 h-6" />
+              </div>
+              <div>
+                <h4 className="font-bold text-slate-900">App Information</h4>
+                <p className="text-xs text-slate-500 font-medium">Version, Developer & Legal</p>
+              </div>
+            </div>
+            <div className="absolute -right-4 -bottom-4 w-20 h-20 bg-slate-50 rounded-full group-hover:bg-tillmax-blue/5 transition-colors" />
+          </motion.div>
         </div>
       </div>
+
+      <AnimatePresence>
+        {showAppInfo && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20, rotate: -2 }}
+              animate={{ opacity: 1, scale: 1, y: 0, rotate: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20, rotate: 2 }}
+              className="bg-white rounded-[2.5rem] p-10 max-w-sm w-full shadow-2xl relative overflow-hidden"
+            >
+              {/* Decorative elements */}
+              <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-tillmax-blue via-tillmax-red to-tillmax-blue" />
+              <div className="absolute -right-10 -top-10 w-40 h-40 bg-tillmax-blue/5 rounded-full blur-3xl" />
+              
+              <button 
+                onClick={() => setShowAppInfo(false)}
+                className="absolute top-6 right-6 p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="flex flex-col items-center text-center space-y-6">
+                <div className="w-20 h-20 bg-tillmax-blue rounded-[2rem] flex items-center justify-center shadow-xl shadow-tillmax-blue/20 rotate-3 hover:rotate-0 transition-transform duration-500">
+                  <Cpu className="w-10 h-10 text-white" />
+                </div>
+
+                <div>
+                  <h2 className="text-2xl font-black text-slate-900 tracking-tight">Tillmax Records</h2>
+                  <div className="inline-flex items-center gap-2 px-3 py-1 bg-blue-50 text-tillmax-blue rounded-full text-[10px] font-black uppercase tracking-widest mt-2">
+                    <span className="w-1.5 h-1.5 bg-tillmax-blue rounded-full animate-pulse" />
+                    Version 1.0 Beta
+                  </div>
+                </div>
+
+                <div className="w-full space-y-4 pt-4">
+                  <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-100 group hover:border-tillmax-blue/30 transition-colors">
+                    <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-400 group-hover:text-tillmax-blue transition-colors shadow-sm">
+                      <User className="w-5 h-5" />
+                    </div>
+                    <div className="text-left">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Developer</p>
+                      <p className="text-sm font-bold text-slate-900">Pasindu Opatha</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-100 group hover:border-tillmax-blue/30 transition-colors">
+                    <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-400 group-hover:text-tillmax-blue transition-colors shadow-sm">
+                      <Mail className="w-5 h-5" />
+                    </div>
+                    <div className="text-left">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contact</p>
+                      <p className="text-sm font-bold text-slate-900">pasindukaushan98@gmail.com</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-6 border-t border-slate-100 w-full">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">
+                    © 2026 Tillmax. All Rights Reserved.
+                  </p>
+                </div>
+
+                <button 
+                  onClick={() => setShowAppInfo(false)}
+                  className="w-full py-4 bg-slate-900 text-white font-black rounded-2xl hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/20 active:scale-95"
+                >
+                  Awesome!
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 };
@@ -1136,17 +1238,15 @@ const InstallationRecords = () => {
       const businessMap = new Map<string, { name: string, postcode: string }>();
       
       if (businessIds.length > 0) {
-        await Promise.all(businessIds.map(async (bid) => {
-          try {
-            const bDoc = await getDoc(doc(db, 'businesses', bid));
-            if (bDoc.exists()) {
-              const bData = bDoc.data() as any;
-              businessMap.set(bid, { name: bData.name, postcode: bData.postcode || '' });
-            }
-          } catch (err) {
-            console.warn(`Failed to fetch business ${bid}:`, err);
-          }
-        }));
+        // Fetch businesses in batches of 30 (Firestore 'in' limit)
+        for (let i = 0; i < businessIds.length; i += 30) {
+          const batchIds = businessIds.slice(i, i + 30);
+          const bSnap = await getDocs(query(collection(db, 'businesses'), where('__name__', 'in', batchIds)));
+          bSnap.forEach(doc => {
+            const bData = doc.data() as any;
+            businessMap.set(doc.id, { name: bData.name, postcode: bData.postcode || '' });
+          });
+        }
       }
 
       const enrichedRecords = recordsData.map(r => {

@@ -239,14 +239,6 @@ export const StockManagement = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-4">
-          <button
-            onClick={() => navigate('/proforma')}
-            className="bg-white border-2 border-slate-100 text-slate-600 hover:border-tillmax-blue hover:text-tillmax-blue px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-widest flex items-center gap-2 transition-all shadow-sm hover:shadow-md"
-          >
-            <Plus className="w-4 h-4" />
-            Generate Proforma Invoice
-          </button>
-
           <div className="flex bg-slate-100 p-1 rounded-2xl">
             <button
               onClick={() => setActiveTab('inventory')}

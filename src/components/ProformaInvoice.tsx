@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, query, orderBy, onSnapshot, addDoc, getDocs, doc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, addDoc, getDocs, doc, getDoc, serverTimestamp, where, limit } from 'firebase/firestore';
 import { useAuth } from '../AuthProvider';
 import { Business, CompanySetting, ProformaInvoice as IProformaInvoice, InvoiceItem } from '../types';
 import { 
@@ -54,6 +54,7 @@ export const ProformaInvoice = () => {
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [showResults, setShowResults] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
   const searchRef = React.useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -66,24 +67,66 @@ export const ProformaInvoice = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Debounced Search Effect
+  useEffect(() => {
+    if (!searchTerm || customerType !== 'existing') {
+      setBusinesses([]);
+      return;
+    }
+
+    const delayDebounceFn = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const s = searchTerm.toLowerCase();
+        // Search by name prefix
+        const q = query(
+          collection(db, 'businesses'),
+          where('name_lowercase', '>=', s),
+          where('name_lowercase', '<=', s + '\uf8ff'),
+          orderBy('name_lowercase'),
+          limit(10)
+        );
+        const snapshot = await getDocs(q);
+        const results = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Business));
+        
+        // If no results by name, try by postcode
+        if (results.length === 0) {
+          const pq = query(
+            collection(db, 'businesses'),
+            where('postcode_normalized', '>=', s.replace(/\s+/g, '')),
+            where('postcode_normalized', '<=', s.replace(/\s+/g, '') + '\uf8ff'),
+            orderBy('postcode_normalized'),
+            limit(10)
+          );
+          const pSnapshot = await getDocs(pq);
+          setBusinesses(pSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Business)));
+        } else {
+          setBusinesses(results);
+        }
+      } catch (error) {
+        console.error("Search error:", error);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 500);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [searchTerm, customerType]);
+
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // Fetch Businesses
-        const bSnap = await getDocs(query(collection(db, 'businesses'), orderBy('name')));
-        setBusinesses(bSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Business)));
-
         // Fetch Company Settings
         const cSnap = await getDoc(doc(db, 'companySettings', 'profile'));
         if (cSnap.exists()) {
           setCompanySettings(cSnap.data() as CompanySetting);
         }
 
-        // Generate Invoice Number (Simple timestamp based for now)
+        // Generate Invoice Number
         setInvoiceNumber(`PI-${Date.now().toString().slice(-6)}`);
 
       } catch (error) {
-        handleFirestoreError(error, OperationType.GET, 'businesses/companySettings');
+        handleFirestoreError(error, OperationType.GET, 'companySettings');
       } finally {
         setLoading(false);
       }
@@ -458,55 +501,56 @@ export const ProformaInvoice = () => {
                     {showResults && searchTerm.length > 0 && (
                       <div className="absolute z-50 w-full mt-2 bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
                         <div className="max-h-[300px] overflow-y-auto">
-                          {businesses
-                            .filter(b => 
-                              b.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                              b.postcode.toLowerCase().includes(searchTerm.toLowerCase())
-                            )
-                            .map((b, idx) => (
-                              <button
-                                key={b.id}
-                                onClick={() => {
-                                  setSelectedBusiness(b);
-                                  setSearchTerm(b.name);
-                                  setShowResults(false);
-                                }}
-                                className={clsx(
-                                  "w-full p-4 text-left hover:bg-slate-50 transition-colors flex items-center justify-between group",
-                                  idx !== 0 && "border-t border-slate-50"
-                                )}
-                              >
-                                <div>
-                                  <p className="font-bold text-slate-900 group-hover:text-tillmax-blue transition-colors">{b.name}</p>
-                                  <p className="text-xs text-slate-500 flex items-center gap-1">
-                                    <MapPin className="w-3 h-3" />
-                                    {b.postcode}
-                                  </p>
-                                </div>
-                                <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <CheckCircle className="w-5 h-5 text-tillmax-blue" />
-                                </div>
-                              </button>
-                            ))}
-                          {businesses.filter(b => 
-                            b.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                            b.postcode.toLowerCase().includes(searchTerm.toLowerCase())
-                          ).length === 0 && (
+                          {isSearching ? (
                             <div className="p-8 text-center">
-                              <AlertCircle className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                              <p className="text-slate-500 text-sm font-medium mb-4">No customers found matching "{searchTerm}"</p>
-                              <button 
-                                onClick={() => {
-                                  setCustomerType('new');
-                                  setNewCustomer(prev => ({ ...prev, name: searchTerm }));
-                                  setSearchTerm('');
-                                  setShowResults(false);
-                                }}
-                                className="btn-secondary py-2 px-4 text-xs"
-                              >
-                                Create New Customer
-                              </button>
+                              <RefreshCw className="w-8 h-8 text-tillmax-blue animate-spin mx-auto mb-2" />
+                              <p className="text-slate-500 text-sm font-medium">Searching customers...</p>
                             </div>
+                          ) : (
+                            <>
+                              {businesses.map((b, idx) => (
+                                <button
+                                  key={b.id}
+                                  onClick={() => {
+                                    setSelectedBusiness(b);
+                                    setSearchTerm(b.name);
+                                    setShowResults(false);
+                                  }}
+                                  className={clsx(
+                                    "w-full p-4 text-left hover:bg-slate-50 transition-colors flex items-center justify-between group",
+                                    idx !== 0 && "border-t border-slate-50"
+                                  )}
+                                >
+                                  <div>
+                                    <p className="font-bold text-slate-900 group-hover:text-tillmax-blue transition-colors">{b.name}</p>
+                                    <p className="text-xs text-slate-500 flex items-center gap-1">
+                                      <MapPin className="w-3 h-3" />
+                                      {b.postcode}
+                                    </p>
+                                  </div>
+                                  <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <CheckCircle className="w-5 h-5 text-tillmax-blue" />
+                                  </div>
+                                </button>
+                              ))}
+                              {businesses.length === 0 && (
+                                <div className="p-8 text-center">
+                                  <AlertCircle className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                                  <p className="text-slate-500 text-sm font-medium mb-4">No customers found matching "{searchTerm}"</p>
+                                  <button 
+                                    onClick={() => {
+                                      setCustomerType('new');
+                                      setNewCustomer(prev => ({ ...prev, name: searchTerm }));
+                                      setSearchTerm('');
+                                      setShowResults(false);
+                                    }}
+                                    className="btn-secondary py-2 px-4 text-xs"
+                                  >
+                                    Create New Customer
+                                  </button>
+                                </div>
+                              )}
+                            </>
                           )}
                         </div>
                       </div>
