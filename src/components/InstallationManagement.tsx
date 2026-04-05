@@ -31,7 +31,7 @@ import { toast } from 'sonner';
 
 const InstallationManagement: React.FC = () => {
   const navigate = useNavigate();
-  const { isAdmin } = useAuth();
+  const { profile, isAdmin } = useAuth();
   const [records, setRecords] = useState<InstallationRecord[]>([]);
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [loading, setLoading] = useState(true);
@@ -42,6 +42,7 @@ const InstallationManagement: React.FC = () => {
   const [salesPeople, setSalesPeople] = useState<SimpleEntity[]>([]);
   const [engineers, setEngineers] = useState<SimpleEntity[]>([]);
   const [equipmentTypes, setEquipmentTypes] = useState<SimpleEntity[]>([]);
+  const [recordToDelete, setRecordToDelete] = useState<InstallationRecord | null>(null);
   const [formData, setFormData] = useState<Partial<InstallationRecord>>({
     businessId: '',
     supportType: 'Online and telephone support',
@@ -179,12 +180,23 @@ const InstallationManagement: React.FC = () => {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this installation record?')) return;
+  const handleDelete = async () => {
+    if (!recordToDelete) return;
     try {
-      await deleteDoc(doc(db, 'installationRecords', id));
+      await deleteDoc(doc(db, 'installationRecords', recordToDelete.id!));
+      
+      // Update local state
+      setRecords(prev => prev.filter(r => r.id !== recordToDelete.id));
+      
+      await addDoc(collection(db, 'logs'), {
+        userId: profile?.uid,
+        username: profile?.username,
+        action: `deleted installation record: ${recordToDelete.invoiceNumber}`,
+        timestamp: new Date().toISOString(),
+      });
+
       toast.success('Record deleted');
-      fetchData();
+      setRecordToDelete(null);
     } catch (error) {
       console.error('Error deleting record', error);
       toast.error('Failed to delete record');
@@ -335,7 +347,7 @@ const InstallationManagement: React.FC = () => {
                           </button>
                           {isAdmin && (
                             <button 
-                              onClick={() => handleDelete(record.id!)}
+                              onClick={() => setRecordToDelete(record)}
                               className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -693,6 +705,42 @@ const InstallationManagement: React.FC = () => {
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {recordToDelete && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl"
+            >
+              <div className="w-16 h-16 bg-red-100 rounded-2xl flex items-center justify-center mb-6">
+                <Trash2 className="w-8 h-8 text-red-600" />
+              </div>
+              <h3 className="text-2xl font-bold text-slate-900 mb-2">Delete Record?</h3>
+              <p className="text-slate-600 mb-8">
+                Are you sure you want to delete record <span className="font-bold text-slate-900">#{recordToDelete.invoiceNumber}</span>? This action cannot be undone.
+              </p>
+              <div className="flex gap-4">
+                <button 
+                  onClick={() => setRecordToDelete(null)}
+                  className="flex-1 px-6 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleDelete}
+                  className="flex-1 px-6 py-3 bg-red-600 text-white font-bold rounded-2xl hover:bg-red-700 transition-colors shadow-lg shadow-red-600/20"
+                >
+                  Delete
+                </button>
+              </div>
             </motion.div>
           </div>
         )}

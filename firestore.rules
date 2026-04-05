@@ -99,22 +99,17 @@ service cloud.firestore {
 
     match /businesses/{businessId} {
       allow read: if isAuthenticated();
-      allow create, update: if isEmployee() && 
+      allow create, update, delete: if isAdmin() && 
         request.resource.data.name is string && request.resource.data.name.size() < 200 &&
         request.resource.data.postcode is string && request.resource.data.postcode.size() < 20;
-      allow delete: if isAdmin();
     }
 
     match /installationRecords/{recordId} {
       allow read: if isAuthenticated();
-      allow create: if isEmployee() &&
+      allow create, update, delete: if isAdmin() &&
         request.resource.data.businessId is string &&
-        (!('invoiceNumber' in request.resource.data) || request.resource.data.invoiceNumber.size() < 100);
-      allow update: if isEmployee() &&
-        request.resource.data.businessId == resource.data.businessId &&
         (!('invoiceNumber' in request.resource.data) || request.resource.data.invoiceNumber.size() < 100) &&
         (!('comments' in request.resource.data) || request.resource.data.comments is string && request.resource.data.comments.size() < 5000);
-      allow delete: if isAdmin();
     }
 
     match /instructionRecords/{recordId} {

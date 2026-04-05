@@ -182,7 +182,7 @@ export const ProformaInvoice = () => {
       try {
         // Use a larger area for the logo and try to maintain a reasonable aspect ratio
         // Most logos are wider than they are tall
-        doc.addImage(companySettings.logo, 'PNG', 20, 30, 60, 25);
+        doc.addImage(companySettings.logo, 'PNG', 20, 25, 80, 30);
       } catch (e) {
         console.error("Error adding logo to PDF", e);
       }
@@ -192,7 +192,7 @@ export const ProformaInvoice = () => {
     doc.setFont("helvetica", "bold");
     doc.text(companySettings.name, 20, 65);
     doc.setFont("helvetica", "normal");
-    const addressLines = doc.splitTextToSize(companySettings.address, 60);
+    const addressLines = doc.splitTextToSize(companySettings.address, 80);
     doc.text(addressLines, 20, 70);
     doc.text(companySettings.postcode, 20, 70 + (addressLines.length * 5));
 

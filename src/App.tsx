@@ -45,6 +45,7 @@ import {
   User
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { toast } from 'sonner';
 import { 
   collection, 
   query, 
@@ -931,6 +932,10 @@ const Businesses = () => {
     if (!isAdmin || !businessToDelete) return;
     try {
       await deleteDoc(doc(db, 'businesses', businessToDelete.id));
+      
+      // Update local state to remove the deleted business
+      setBusinesses(prev => prev.filter(b => b.id !== businessToDelete.id));
+      
       await addDoc(collection(db, 'logs'), {
         userId: profile?.uid,
         username: profile?.username,
@@ -938,8 +943,10 @@ const Businesses = () => {
         timestamp: new Date().toISOString(),
       });
       setBusinessToDelete(null);
+      toast.success('Business deleted successfully');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `businesses/${businessToDelete.id}`);
+      toast.error('Failed to delete business');
     }
   };
 
